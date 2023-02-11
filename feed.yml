@@ -1,0 +1,14 @@
+monitor:
+    instance: <YOUR MASTODON INSTANCE>
+    limit: 0
+    save: false
+    feed:
+        - name:
+          url: <RSS URL>
+          token: <YOUR MASTODON API TOKEN>
+          delete:
+          hashlink:
+          prefix:
+
+        - name:
+          url:
