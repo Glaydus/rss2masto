@@ -38,10 +38,7 @@ func (fm *FeedsMonitor) Start() {
 
 func (fm *FeedsMonitor) getFeed(f *Feed) {
 
-	if f.FeedUrl == "" {
-		return
-	}
-	if f.Token == "" {
+	if f.FeedUrl == "" || f.Token == "" {
 		return
 	}
 
@@ -65,25 +62,8 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 	if f.Delete != "" {
 		reDelete, _ = regexp.Compile(f.Delete)
 	}
-	// Set language to TLD if not set
-	if f.Language == "" {
-		url, _ := url.Parse(f.FeedUrl)
-		if url != nil {
-			host := url.Hostname()
-			tld := host[strings.LastIndex(host, ".")+1:]
-			if len(tld) == 2 {
-				f.Language = tld
-			}
-		}
-	}
 
-	if _, ok := visibilityTypes[f.Visibility]; !ok {
-		f.Visibility = "private"
-	}
-
-	if f.LastRun == 0 {
-		f.LastRun = fm.Monitor.LastMonit
-	}
+	fm.fillEmptyFields(f)
 
 	pol := bluemonday.StrictPolicy()
 
@@ -146,6 +126,26 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 			f.Count++
 		}
 		defer response.Body.Close()
+	}
+}
+
+func (fm *FeedsMonitor) fillEmptyFields(f *Feed) {
+	// Set language to TLD if not set
+	if f.Language == "" {
+		url, _ := url.Parse(f.FeedUrl)
+		if url != nil {
+			host := url.Hostname()
+			tld := host[strings.LastIndex(host, ".")+1:]
+			if len(tld) == 2 {
+				f.Language = tld
+			}
+		}
+	}
+	if _, ok := visibilityTypes[f.Visibility]; !ok {
+		f.Visibility = "private"
+	}
+	if f.LastRun == 0 {
+		f.LastRun = fm.Monitor.LastMonit
 	}
 }
 
