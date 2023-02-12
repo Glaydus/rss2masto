@@ -1,8 +1,8 @@
 package rss2masto
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -40,6 +40,7 @@ type Feed struct {
 	Delete     string `yaml:"delete,omitempty"`
 	HashLink   string `yaml:"hashlink,omitempty"`
 	LastRun    int64  `yaml:"-"`
+	Count      int    `yaml:"-"` // Number of posts
 }
 
 func NewFeedsMonitor() (*FeedsMonitor, error) {
@@ -87,7 +88,7 @@ func getInstanceLimit(fm *FeedsMonitor) (limit int) {
 	if fm.Monitor.Instance != "" {
 		resp, _ := http.Get(fm.Monitor.Instance + "/api/v1/instance")
 		if resp == nil {
-			fmt.Println("Error getting instance data")
+			log.Println("Error getting instance data")
 			return
 		}
 		defer resp.Body.Close()

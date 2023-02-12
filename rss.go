@@ -31,7 +31,7 @@ func (fm *FeedsMonitor) Start() {
 	if fm.Monitor.Save {
 		err := fm.SaveFeedsData()
 		if err != nil {
-			fmt.Println("Error saving config file: ", err)
+			log.Println("Error saving config file: ", err)
 		}
 	}
 }
@@ -142,6 +142,8 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		response, err := client.Do(req)
 		if err != nil || response.StatusCode != 200 {
 			log.Println("Error posting to Mastodon", err)
+		} else {
+			f.Count++
 		}
 		defer response.Body.Close()
 	}
