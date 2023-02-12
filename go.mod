@@ -1,6 +1,6 @@
 module github.com/glaydus/rss2masto
 
-go 1.20
+go 1.18
 
 require (
 	github.com/microcosm-cc/bluemonday v1.0.22

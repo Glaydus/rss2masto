@@ -34,7 +34,7 @@ type Feed struct {
 	Name       string `yaml:"name"`
 	FeedUrl    string `yaml:"url"`
 	Token      string `yaml:"token"`
-	Language   string `yaml:"language"`
+	Language   string `yaml:"language,omitempty"`
 	Prefix     string `yaml:"prefix,omitempty"`
 	Visibility string `yaml:"visibility,omitempty"`
 	Delete     string `yaml:"delete,omitempty"`
