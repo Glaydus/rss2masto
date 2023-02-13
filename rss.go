@@ -21,14 +21,22 @@ func (fm *FeedsMonitor) Start() {
 
 	var maxTime int64
 
-	for _, feed := range fm.Monitor.Feeds {
-		fm.getFeed(feed)
-		maxTime = maxInt(maxTime, feed.LastRun)
-	}
-	fm.Monitor.Last = maxTime
-	fm.Monitor.LastMonit = fm.Monitor.Last
+	for _, feed := range fm.Instance.Feeds {
 
-	if fm.Monitor.Save {
+		if !fm.checkFeed(feed) {
+			continue
+		}
+
+		fm.getFeed(feed)
+
+		if feed.LastRun > maxTime {
+			maxTime = feed.LastRun
+		}
+	}
+	fm.Instance.Last = maxTime
+	fm.Instance.LastMonit = fm.Instance.Last
+
+	if fm.Instance.Save {
 		err := fm.SaveFeedsData()
 		if err != nil {
 			log.Println("Error saving config file: ", err)
@@ -36,11 +44,20 @@ func (fm *FeedsMonitor) Start() {
 	}
 }
 
-func (fm *FeedsMonitor) getFeed(f *Feed) {
-
-	if f.FeedUrl == "" || f.Token == "" {
-		return
+func (fm *FeedsMonitor) checkFeed(feed *Feed) bool {
+	if feed.FeedUrl == "" || feed.Token == "" {
+		return false
 	}
+	if feed.LastRun == 0 {
+		feed.LastRun = fm.Instance.LastMonit
+	}
+	if _, ok := visibilityTypes[feed.Visibility]; !ok {
+		feed.Visibility = "private"
+	}
+	return true
+}
+
+func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -57,13 +74,11 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		return feed.Items[i].PublishedParsed.Unix() > feed.Items[j].PublishedParsed.Unix()
 	})
 
-	var reDelete *regexp.Regexp
+	var reReplace *regexp.Regexp
 
-	if f.Delete != "" {
-		reDelete, _ = regexp.Compile(f.Delete)
+	if f.ReplaceFrom != "" {
+		reReplace, _ = regexp.Compile(f.ReplaceFrom)
 	}
-
-	fm.fillEmptyFields(f)
 
 	pol := bluemonday.StrictPolicy()
 
@@ -74,11 +89,11 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		if pubUnixTime <= f.LastRun {
 			continue
 		}
-		f.LastRun = maxInt(f.LastRun, pubUnixTime)
+		f.LastRun = pubUnixTime
 
 		description := pol.Sanitize(item.Description)
-		if reDelete != nil {
-			description = reDelete.ReplaceAllString(description, "")
+		if reReplace != nil {
+			description = reReplace.ReplaceAllString(description, f.ReplaceTo)
 		}
 		description = html.UnescapeString(strings.TrimSpace(description))
 		title := html.UnescapeString(item.Title)
@@ -86,8 +101,8 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 		// Check if the post is too long
 		l := len(title) + len(hashtags) + len(item.Link)
-		if l+len(description) > fm.Monitor.Limit {
-			n := fm.Monitor.Limit - l - 12
+		if l+len(description) > fm.Instance.Limit {
+			n := fm.Instance.Limit - l - 12
 			description = description[:n] + " [...]"
 		}
 
@@ -111,41 +126,20 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		data := url.Values{}
 		data.Set("status", msg)
 		data.Set("visibility", f.Visibility)
-		data.Set("language", f.Language)
+		data.Set("language", feed.Language)
 
-		req, _ := http.NewRequest("POST", fm.Monitor.Instance+"/api/v1/statuses", strings.NewReader(data.Encode()))
+		req, _ := http.NewRequest("POST", fm.Instance.URL+"/api/v1/statuses", strings.NewReader(data.Encode()))
 		req.Header.Set("Authorization", "Bearer "+f.Token)
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 		client := &http.Client{}
-		response, err := client.Do(req)
-		if err != nil || response.StatusCode != 200 {
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode != 200 {
 			log.Println("Error posting to Mastodon", err)
-		} else {
-			f.Count++
+			continue
 		}
-		defer response.Body.Close()
-	}
-}
-
-func (fm *FeedsMonitor) fillEmptyFields(f *Feed) {
-	// Set language to TLD if not set
-	if f.Language == "" {
-		url, _ := url.Parse(f.FeedUrl)
-		if url != nil {
-			host := url.Hostname()
-			tld := host[strings.LastIndex(host, ".")+1:]
-			if len(tld) == 2 {
-				f.Language = tld
-			}
-		}
-	}
-	if _, ok := visibilityTypes[f.Visibility]; !ok {
-		f.Visibility = "private"
-	}
-	if f.LastRun == 0 {
-		f.LastRun = fm.Monitor.LastMonit
+		f.Count++
 	}
 }
 
@@ -194,12 +188,4 @@ func makeHasztags(item *gofeed.Item, f *Feed) (hashtags string) {
 
 func splitter(r rune) bool {
 	return r == '.' || r == ':'
-}
-
-// Max returns the larger of x or y.
-func maxInt(x, y int64) int64 {
-	if x < y {
-		return y
-	}
-	return x
 }

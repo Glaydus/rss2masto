@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/valyala/fastjson"
+	jsoniter "github.com/json-iterator/go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,53 +20,53 @@ var visibilityTypes = map[string]struct{}{
 }
 
 type FeedsMonitor struct {
-	Monitor struct {
+	Instance struct {
 		Last      int64   `yaml:"last"`
-		Instance  string  `yaml:"instance"`
+		URL       string  `yaml:"url"`
 		Limit     int     `yaml:"limit"`
 		Save      bool    `yaml:"save,omitempty"`
 		LastMonit int64   `yaml:"-"`
 		Feeds     []*Feed `yaml:"feed"`
-	} `yaml:"monitor"`
+	} `yaml:"instance"`
 }
 
 type Feed struct {
-	Name       string `yaml:"name"`
-	FeedUrl    string `yaml:"url"`
-	Token      string `yaml:"token"`
-	Language   string `yaml:"language,omitempty"`
-	Prefix     string `yaml:"prefix,omitempty"`
-	Visibility string `yaml:"visibility,omitempty"`
-	Delete     string `yaml:"delete,omitempty"`
-	HashLink   string `yaml:"hashlink,omitempty"`
-	LastRun    int64  `yaml:"-"`
-	Count      int    `yaml:"-"` // Number of posts
+	Name        string `yaml:"name"`
+	FeedUrl     string `yaml:"url"`
+	Token       string `yaml:"token"`
+	Prefix      string `yaml:"prefix,omitempty"`
+	Visibility  string `yaml:"visibility,omitempty"`
+	HashLink    string `yaml:"hashlink,omitempty"`
+	ReplaceFrom string `yaml:"replace_from,omitempty"`
+	ReplaceTo   string `yaml:"replace_to,omitempty"`
+	LastRun     int64  `yaml:"-"`
+	Count       int    `yaml:"-"` // Number of posts
 }
 
 func NewFeedsMonitor() (*FeedsMonitor, error) {
-	var fMonitor FeedsMonitor
+	var fm FeedsMonitor
 
 	file, err := os.ReadFile(_feedFileName)
 	if err != nil {
 		return nil, err
 	}
-	err = yaml.Unmarshal(file, &fMonitor)
+	err = yaml.Unmarshal(file, &fm)
 	if err != nil {
 		return nil, err
 	}
 
 	// Set last to now -50 min if not set or older than 1 hour
-	if fMonitor.Monitor.Last == 0 || time.Now().Sub(time.Unix(fMonitor.Monitor.Last, 0)).Hours() > 1 {
-		fMonitor.Monitor.Last = time.Now().UTC().Add(time.Minute * time.Duration(-50)).Unix() // Now() -50 min
+	if fm.Instance.Last == 0 || time.Now().Sub(time.Unix(fm.Instance.Last, 0)).Hours() > 1 {
+		fm.Instance.Last = time.Now().UTC().Add(time.Minute * time.Duration(-50)).Unix() // Now() -50 min
 	}
-	fMonitor.Monitor.LastMonit = fMonitor.Monitor.Last
+	fm.Instance.LastMonit = fm.Instance.Last
 
 	// Set instance characters limit if not set
-	if fMonitor.Monitor.Limit == 0 {
-		fMonitor.Monitor.Limit = getInstanceLimit(&fMonitor)
+	if fm.Instance.Limit == 0 {
+		fm.Instance.Limit = getInstanceLimit(&fm)
 	}
 
-	return &fMonitor, nil
+	return &fm, nil
 }
 
 func (f *FeedsMonitor) SaveFeedsData() error {
@@ -85,8 +85,8 @@ func (f *FeedsMonitor) SaveFeedsData() error {
 func getInstanceLimit(fm *FeedsMonitor) (limit int) {
 	limit = 500 // default mastodon limit
 
-	if fm.Monitor.Instance != "" {
-		resp, _ := http.Get(fm.Monitor.Instance + "/api/v1/instance")
+	if fm.Instance.URL != "" {
+		resp, _ := http.Get(fm.Instance.URL + "/api/v1/instance")
 		if resp == nil {
 			log.Println("Error getting instance data")
 			return
@@ -95,11 +95,9 @@ func getInstanceLimit(fm *FeedsMonitor) (limit int) {
 
 		body, _ := io.ReadAll(resp.Body)
 
-		var p fastjson.Parser
-		if v, err := p.ParseBytes(body); err == nil {
-			if i, err := v.Get("configuration", "statuses", "max_characters").Int(); err == nil {
-				limit = i
-			}
+		i := jsoniter.Get(body, "configuration", "statuses", "max_characters").ToInt()
+		if i > 0 {
+			limit = i
 		}
 	}
 	return

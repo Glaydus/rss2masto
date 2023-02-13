@@ -1,12 +1,13 @@
-monitor:
-    instance: <YOUR MASTODON INSTANCE>
+instance:
+    url: <YOUR MASTODON INSTANCE>
     limit: 0
     save: false
     feed:
         - name:
           url: <RSS URL>
           token: <YOUR MASTODON API TOKEN>
-          delete:
+          replace_from:
+          replace_to:
           hashlink:
           prefix:
 
