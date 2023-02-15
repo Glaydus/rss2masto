@@ -33,8 +33,7 @@ func (fm *FeedsMonitor) Start() {
 			maxTime = feed.LastRun
 		}
 	}
-	fm.Instance.Last = maxTime
-	fm.Instance.LastMonit = fm.Instance.Last
+	fm.Instance.LastMonit = maxTime
 
 	if fm.Instance.Save {
 		err := fm.SaveFeedsData()
@@ -135,11 +134,16 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode != 200 {
+		if err != nil {
 			log.Println("Error posting to Mastodon", err)
 			continue
 		}
-		f.Count++
+		defer resp.Body.Close()
+
+		if resp.StatusCode == 200 {
+			f.Count++
+		}
+
 	}
 }
 

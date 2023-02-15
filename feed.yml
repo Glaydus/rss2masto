@@ -1,6 +1,5 @@
 instance:
     url: <YOUR MASTODON INSTANCE>
-    limit: 0
     save: false
     feed:
         - name:

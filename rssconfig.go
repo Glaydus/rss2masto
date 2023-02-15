@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const _feedFileName = "./feed.yml"
+var ConfigFile = "./feed.yml"
 
 var visibilityTypes = map[string]struct{}{
 	"public":   {},
@@ -21,11 +21,10 @@ var visibilityTypes = map[string]struct{}{
 
 type FeedsMonitor struct {
 	Instance struct {
-		Last      int64   `yaml:"last"`
 		URL       string  `yaml:"url"`
 		Limit     int     `yaml:"limit"`
 		Save      bool    `yaml:"save,omitempty"`
-		LastMonit int64   `yaml:"-"`
+		LastMonit int64   `yaml:"last_monit,omitempty"`
 		Feeds     []*Feed `yaml:"feed"`
 	} `yaml:"instance"`
 }
@@ -39,14 +38,14 @@ type Feed struct {
 	HashLink    string `yaml:"hashlink,omitempty"`
 	ReplaceFrom string `yaml:"replace_from,omitempty"`
 	ReplaceTo   string `yaml:"replace_to,omitempty"`
-	LastRun     int64  `yaml:"-"`
-	Count       int    `yaml:"-"` // Number of posts
+	LastRun     int64  `yaml:"last_run,omitempty"`
+	Count       int    `yaml:"count,omitempty"`
 }
 
 func NewFeedsMonitor() (*FeedsMonitor, error) {
 	var fm FeedsMonitor
 
-	file, err := os.ReadFile(_feedFileName)
+	file, err := os.ReadFile(ConfigFile)
 	if err != nil {
 		return nil, err
 	}
@@ -55,11 +54,10 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		return nil, err
 	}
 
-	// Set last to now -50 min if not set or older than 1 hour
-	if fm.Instance.Last == 0 || time.Now().Sub(time.Unix(fm.Instance.Last, 0)).Hours() > 1 {
-		fm.Instance.Last = time.Now().UTC().Add(time.Minute * time.Duration(-50)).Unix() // Now() -50 min
+	// Set LastMonit to now -50 min if not set or older than 1 hour
+	if fm.Instance.LastMonit == 0 || time.Now().Sub(time.Unix(fm.Instance.LastMonit, 0)).Hours() > 1 {
+		fm.Instance.LastMonit = time.Now().UTC().Add(time.Minute * time.Duration(-50)).Unix() // Now() -50 min
 	}
-	fm.Instance.LastMonit = fm.Instance.Last
 
 	// Set instance characters limit if not set
 	if fm.Instance.Limit == 0 {
@@ -74,7 +72,7 @@ func (f *FeedsMonitor) SaveFeedsData() error {
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(_feedFileName, out, 0644)
+	err = os.WriteFile(ConfigFile, out, 0644)
 	if err != nil {
 		return err
 	}
