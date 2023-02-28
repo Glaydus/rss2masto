@@ -23,7 +23,7 @@ func (fm *FeedsMonitor) Start() {
 
 	for _, feed := range fm.Instance.Feeds {
 
-		if !fm.checkFeed(feed) {
+		if feed.FeedUrl == "" || feed.Token == "" {
 			continue
 		}
 
@@ -41,19 +41,6 @@ func (fm *FeedsMonitor) Start() {
 			log.Println("Error saving config file: ", err)
 		}
 	}
-}
-
-func (fm *FeedsMonitor) checkFeed(feed *Feed) bool {
-	if feed.FeedUrl == "" || feed.Token == "" {
-		return false
-	}
-	if feed.LastRun == 0 {
-		feed.LastRun = fm.Instance.LastMonit
-	}
-	if _, ok := visibilityTypes[feed.Visibility]; !ok {
-		feed.Visibility = "private"
-	}
-	return true
 }
 
 func (fm *FeedsMonitor) getFeed(f *Feed) {
@@ -143,7 +130,6 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		if resp.StatusCode == 200 {
 			f.Count++
 		}
-
 	}
 }
 

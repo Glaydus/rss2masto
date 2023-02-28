@@ -64,6 +64,16 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		fm.Instance.Limit = getInstanceLimit(&fm)
 	}
 
+	// Set default values for feeds
+	for _, feed := range fm.Instance.Feeds {
+		if feed.LastRun == 0 {
+			feed.LastRun = fm.Instance.LastMonit
+		}
+		if _, ok := visibilityTypes[feed.Visibility]; !ok {
+			feed.Visibility = "private"
+		}
+	}
+
 	return &fm, nil
 }
 
