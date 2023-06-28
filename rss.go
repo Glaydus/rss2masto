@@ -60,10 +60,13 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		return feed.Items[i].PublishedParsed.Unix() > feed.Items[j].PublishedParsed.Unix()
 	})
 
-	var reReplace *regexp.Regexp
+	var reReplace, reTag *regexp.Regexp
 
 	if f.ReplaceFrom != "" {
 		reReplace, _ = regexp.Compile(f.ReplaceFrom)
+	}
+	if f.HashLink != "" {
+		reTag, _ = regexp.Compile(f.HashLink)
 	}
 
 	pol := bluemonday.StrictPolicy()
@@ -83,7 +86,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		}
 		description = html.UnescapeString(strings.TrimSpace(description))
 		title := html.UnescapeString(item.Title)
-		hashtags := makeHasztags(item, f)
+		hashtags := makeHasztags(item, f, reTag)
 
 		// Check if the post is too long
 		l := len(title) + len(hashtags) + len(item.Link)
@@ -133,7 +136,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 	}
 }
 
-func makeHasztags(item *gofeed.Item, f *Feed) (hashtags string) {
+func makeHasztags(item *gofeed.Item, f *Feed, re *regexp.Regexp) (hashtags string) {
 	var aTags []string
 
 	if item.Categories != nil {
@@ -150,10 +153,9 @@ func makeHasztags(item *gofeed.Item, f *Feed) (hashtags string) {
 			}
 		}
 	} else {
-		reTag, _ := regexp.Compile(f.HashLink)
-		if reTag != nil {
-			res := reTag.FindAllStringSubmatch(item.Link, 1)
-			if len(res) != 0 {
+		if re != nil {
+			res := re.FindAllStringSubmatch(item.Link, 1)
+			if (len(res) != 0) && (len(res[0]) == 2) {
 				tag := res[0][1]
 				if !strings.Contains(tag, "-") {
 					aTags = append(aTags, tag)
