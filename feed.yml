@@ -1,10 +1,14 @@
 instance:
     url: <YOUR MASTODON INSTANCE>
+    lang: en
+    timezone: Europe/Warsaw
+    limit:
     save: false
     feed:
-        - name:
+        - name: <FEED NAME>
           url: <RSS URL>
           token: <YOUR MASTODON API TOKEN>
+          interval: 10
           replace_from:
           replace_to:
           hashlink:
@@ -12,3 +16,4 @@ instance:
 
         - name:
           url:
+          token:
