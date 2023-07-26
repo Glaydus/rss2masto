@@ -22,7 +22,7 @@ import (
 
 const (
 	earlierDuration = -time.Hour * 24 * 2
-	storageDuration = time.Hour * 24 * 10
+	storageDuration = time.Hour * 24 * 7
 )
 
 var (
@@ -74,10 +74,6 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 	if err != nil {
 		fmt.Println("Parsing error:", f.Name, err)
 		return
-	}
-
-	postClient := &http.Client{
-		Timeout: fm.ctxTimeout,
 	}
 
 	// Sort by date descending
@@ -189,13 +185,16 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 		if !__DEBUG__ {
 			func() {
-				req, err := createRequest(fm.Instance.URL, idempotencyKey, f.Token, strings.NewReader(data.Encode()))
+				ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
+				defer cancel()
+
+				req, err := createRequest(ctx, fm.Instance.URL, idempotencyKey, f.Token, strings.NewReader(data.Encode()))
 				if err != nil {
 					fmt.Println("Error creating request:", err)
 					return
 				}
 
-				resp, err := postClient.Do(req)
+				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
 					fmt.Println(f.Name, "Mastodon post error:", err)
 					return
@@ -218,8 +217,8 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 	}
 }
 
-func createRequest(url, key, token string, data *strings.Reader) (*http.Request, error) {
-	req, err := http.NewRequest("POST", url+"/api/v1/statuses", data)
+func createRequest(ctx context.Context, url, key, token string, data *strings.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/v1/statuses", data)
 	if err != nil {
 		return nil, err
 	}
