@@ -48,6 +48,7 @@ func (fm *FeedsMonitor) Start() {
 				f.Progress.Add(1)
 				if f.Progress.Load() >= f.Interval {
 					f.Progress.Store(0)
+					fm.lastCheck.Store(time.Now().Unix())
 					fm.getFeed(f)
 				}
 			}(feed)

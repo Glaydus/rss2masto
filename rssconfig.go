@@ -1,6 +1,7 @@
 package rss2masto
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ type FeedsMonitor struct {
 	} `yaml:"instance"`
 
 	ctxTimeout time.Duration
+	lastCheck  atomic.Int64
 	lastMonit  atomic.Int64
 	location   *time.Location
 	wg         sync.WaitGroup
@@ -116,12 +118,19 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 			}
 		}
 	}
-
 	return &fm, nil
 }
 
-func (fm *FeedsMonitor) Location() *time.Location {
-	return fm.location
+func (fm *FeedsMonitor) LastCheck() int64 {
+	return fm.lastCheck.Load()
+}
+
+func (fm *FeedsMonitor) LastCheckStr() string {
+	sec := fm.lastCheck.Load()
+	if sec == 0 {
+		return ""
+	}
+	return time.Unix(sec, 0).In(fm.Location()).Format(time.DateTime)
 }
 
 func (fm *FeedsMonitor) LastMonit() int64 {
@@ -135,6 +144,10 @@ func (fm *FeedsMonitor) FeedIndex(name string) int {
 		}
 	}
 	return -1
+}
+
+func (fm *FeedsMonitor) Location() *time.Location {
+	return fm.location
 }
 
 func (fm *FeedsMonitor) SaveFeedsData() error {
@@ -241,17 +254,16 @@ func (fm *FeedsMonitor) updateFeedData(feed *Feed) error {
 		return nil
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fm.Instance.URL+"/api/v1/accounts/verify_credentials", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fm.Instance.URL+"/api/v1/accounts/verify_credentials", nil)
 	if err != nil {
 		return fmt.Errorf("%s Unable to create new request: %w", feed.Name, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+feed.Token)
 
-	client := &http.Client{
-		Timeout: time.Second * 5,
-	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s Unable to execute request: %w", feed.Name, err)
 	}
