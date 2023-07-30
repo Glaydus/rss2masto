@@ -77,9 +77,10 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	}
 	fm.lastMonit.Store(fm.Instance.Monit)
 
-	// Set LastMonit to now -50 min if not set or older than 1 hour
-	if fm.Instance.Monit == 0 || time.Now().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 1 {
-		fm.lastMonit.Store(time.Now().UTC().Add(time.Minute * time.Duration(-50)).Unix()) // Now() -50 min
+	// Set LastMonit to now -55 min if not set or older than 1 hour
+	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 1 {
+		t := time.Now().UTC().Truncate(time.Minute).Add(time.Minute * time.Duration(-55))
+		fm.lastMonit.Store(t.Unix())
 	}
 
 	// load location for time formatting
@@ -108,6 +109,8 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		if feed.Interval == 0 {
 			feed.Interval = DefaultCheckInterval
 		}
+		feed.LastRun += 60 * feed.Interval
+
 		if _, ok := visibilityTypes[feed.Visibility]; !ok {
 			feed.Visibility = "private"
 		}
