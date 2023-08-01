@@ -72,8 +72,12 @@ func (c *CacheClient) Get(key string) (string, error) {
 }
 
 // GetKeys gets all keys matching a pattern
-func (c *CacheClient) GetKeys(keyPattern string) ([]string, error) {
-	keys, _, err := c.client.Scan(c.ctx, 0, keyPattern, 0).Result()
+func (c *CacheClient) GetKeys(keyPattern string, count ...int64) ([]string, error) {
+	limit := int64(0)
+	if len(count) > 0 {
+		limit = count[0]
+	}
+	keys, _, err := c.client.Scan(c.ctx, 0, keyPattern, limit).Result()
 	return keys, err
 }
 

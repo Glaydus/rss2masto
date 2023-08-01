@@ -12,24 +12,19 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
-
 	"github.com/cespare/xxhash/v2"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/mmcdole/gofeed"
 )
 
 const (
-	earlierDuration = -time.Hour * 24 * 2
+	earlierDuration = -time.Hour * 24
 	storageDuration = time.Hour * 24 * 7
 )
 
 var (
 	feedParser   = gofeed.NewParser()
 	strictPolicy = bluemonday.StrictPolicy()
-	// instead of deprecated strings.Title()
-	casesTitle = cases.Title(language.Polish, cases.NoLower)
 )
 
 func (fm *FeedsMonitor) Start() {
@@ -73,7 +68,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 	feed, err := feedParser.ParseURLWithContext(f.FeedUrl, ctx)
 	if err != nil {
-		fmt.Println("Parsing error:", f.Name, err)
+		fmt.Println(f.Name, "Parsing error:", err)
 		return
 	}
 

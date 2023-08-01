@@ -12,6 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	jsoniter "github.com/json-iterator/go"
 	"gopkg.in/yaml.v3"
 )
@@ -62,6 +65,8 @@ var (
 		"unlisted": {},
 		"private":  {},
 	}
+	// use this to convert strings to title case (instead of deprecated strings.Title())
+	casesTitle cases.Caser
 )
 
 func NewFeedsMonitor() (*FeedsMonitor, error) {
@@ -89,6 +94,17 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		fmt.Println(err)
 		fm.location = time.UTC
 	}
+
+	// set language tag for case conversion
+	langTag := language.English
+	if fm.Instance.Lang != "" {
+		langTag, err = language.Parse(fm.Instance.Lang)
+		if err != nil {
+			langTag = language.English
+			fmt.Println(err, "using default language")
+		}
+	}
+	casesTitle = cases.Title(langTag, cases.NoLower)
 
 	// Set instance characters limit if not set
 	if fm.Instance.Limit == 0 {
@@ -179,7 +195,7 @@ func (fm *FeedsMonitor) UpdateFollowers() {
 				defer wg.Done()
 				err := fm.getFollowers(feed)
 				if err != nil {
-					fmt.Println(err)
+					fmt.Println(feed.Name, err)
 				}
 			}(feed)
 		}
