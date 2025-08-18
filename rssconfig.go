@@ -68,6 +68,12 @@ var (
 	casesTitle cases.Caser
 )
 
+// NewFeedsMonitor creates and initializes a new FeedsMonitor instance by:
+// - Loading and parsing the feed configuration from YAML file
+// - Setting up monitoring timestamps and intervals
+// - Configuring timezone and language settings
+// - Setting character limits and feed IDs
+// - Initializing default values for all feeds
 func NewFeedsMonitor() (*FeedsMonitor, error) {
 	var fm FeedsMonitor
 
@@ -147,10 +153,12 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	return &fm, nil
 }
 
+// LastCheck returns the Unix timestamp of the last check
 func (fm *FeedsMonitor) LastCheck() int64 {
 	return fm.lastCheck.Load()
 }
 
+// LastCheckStr returns the formatted date/time string of the last check
 func (fm *FeedsMonitor) LastCheckStr() string {
 	sec := fm.lastCheck.Load()
 	if sec == 0 {
@@ -159,10 +167,12 @@ func (fm *FeedsMonitor) LastCheckStr() string {
 	return time.Unix(sec, 0).In(fm.Location()).Format(time.DateTime)
 }
 
+// LastMonit returns the Unix timestamp of the last monitoring run
 func (fm *FeedsMonitor) LastMonit() int64 {
 	return fm.lastMonit.Load()
 }
 
+// FeedIndex returns the index of the feed with the given name prefix, or -1 if not found
 func (fm *FeedsMonitor) FeedIndex(name string) int {
 	for i, feed := range fm.Instance.Feeds {
 		if strings.HasPrefix(feed.Name, name) {
@@ -172,10 +182,12 @@ func (fm *FeedsMonitor) FeedIndex(name string) int {
 	return -1
 }
 
+// Location returns the timezone location used for time formatting
 func (fm *FeedsMonitor) Location() *time.Location {
 	return fm.location
 }
 
+// SaveFeedsData saves the current feed monitoring state to the config file
 func (fm *FeedsMonitor) SaveFeedsData() error {
 	fm.Instance.Monit = fm.LastMonit()
 	out, err := yaml.Marshal(fm)
@@ -189,6 +201,7 @@ func (fm *FeedsMonitor) SaveFeedsData() error {
 	return nil
 }
 
+// UpdateFollowers concurrently updates the follower counts for all feeds
 func (fm *FeedsMonitor) UpdateFollowers() {
 	if fm.Instance.URL == "" {
 		return
@@ -211,7 +224,6 @@ func (fm *FeedsMonitor) UpdateFollowers() {
 }
 
 func (fm *FeedsMonitor) getFollowers(feed *Feed) error {
-
 	urlAccount := fmt.Sprintf("%s/api/v1/accounts/%d", fm.Instance.URL, feed.Id)
 	if err := fm.validateURL(urlAccount); err != nil {
 		return fmt.Errorf("invalid instance URL: %w", err)

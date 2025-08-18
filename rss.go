@@ -28,6 +28,12 @@ var (
 	strictPolicy = bluemonday.StrictPolicy()
 )
 
+// Start processes all feeds in parallel using goroutines
+// For each feed with valid URL and token:
+// - Increments progress counter
+// - When progress reaches interval, resets counter and processes feed
+// - Updates last check timestamp
+// - Saves feed data if configured
 func (fm *FeedsMonitor) Start() {
 
 	if len(fm.Instance.Feeds) == 0 {

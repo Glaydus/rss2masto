@@ -106,10 +106,17 @@ func (c *CacheClient) Clear() error {
 	return c.client.FlushDB(c.ctx).Err()
 }
 
+// ZAdd adds members to a sorted set stored at key, creating the sorted set if it doesn't exist
 func (c *CacheClient) ZAdd(key string, members []redis.Z) error {
 	return c.client.ZAdd(c.ctx, key, members...).Err()
 }
 
+// ZRange returns the elements of the sorted set stored at key with a score between min and max (inclusive)
+func (c *CacheClient) ZRange(key string, start, stop int64) ([]string, error) {
+	return c.client.ZRange(c.ctx, key, start, stop).Result()
+}
+
+// ZRevRange returns the elements of the sorted set stored at key in reverse order with a score between start and stop (inclusive)
 func (c *CacheClient) ZRevRange(key string, start, stop int64) ([]string, error) {
 	return c.client.ZRevRange(c.ctx, key, start, stop).Result()
 }
