@@ -26,7 +26,7 @@ func Cache() *CacheClient {
 		var opt *redis.Options
 		var err error
 
-		if __DEBUG__ {
+		if debugMode {
 			opt = &redis.Options{
 				Addr:     "localhost:6379",
 				Password: "", // no password set
@@ -73,7 +73,7 @@ func (c *CacheClient) Get(key string) (string, error) {
 
 // GetKeys gets all keys matching a pattern
 func (c *CacheClient) GetKeys(keyPattern string, count ...int64) ([]string, error) {
-	limit := int64(0)
+	limit := int64(-1)
 	if len(count) > 0 {
 		limit = count[0]
 	}
@@ -91,6 +91,11 @@ func (c *CacheClient) GetBytes(key string) ([]byte, error) {
 	return c.client.Get(c.ctx, key).Bytes()
 }
 
+// MGet gets multiple values from redis
+func (c *CacheClient) MGet(keys []string) ([]interface{}, error) {
+	return c.client.MGet(c.ctx, keys...).Result()
+}
+
 // Exists checks if a key exists in redis
 func (c *CacheClient) Exists(key string) bool {
 	return c.client.Exists(c.ctx, key).Val() > 0
@@ -99,4 +104,12 @@ func (c *CacheClient) Exists(key string) bool {
 // Clear clears all keys in redis
 func (c *CacheClient) Clear() error {
 	return c.client.FlushDB(c.ctx).Err()
+}
+
+func (c *CacheClient) ZAdd(key string, members []redis.Z) error {
+	return c.client.ZAdd(c.ctx, key, members...).Err()
+}
+
+func (c *CacheClient) ZRevRange(key string, start, stop int64) ([]string, error) {
+	return c.client.ZRevRange(c.ctx, key, start, stop).Result()
 }

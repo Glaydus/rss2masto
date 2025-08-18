@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,10 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
-
-	jsoniter "github.com/json-iterator/go"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,7 +34,6 @@ type FeedsMonitor struct {
 	lastCheck  atomic.Int64
 	lastMonit  atomic.Int64
 	location   *time.Location
-	wg         sync.WaitGroup
 }
 
 type Feed struct {
@@ -117,6 +116,8 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		fmt.Println(err)
 	}
 
+	feedNameReplacer := strings.NewReplacer("\n", "\\n", "\r", "\\r")
+
 	// Set default values for feeds
 	for _, feed := range fm.Instance.Feeds {
 		if feed.LastRun == 0 {
@@ -136,7 +137,13 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 				feed.Name = u.Hostname()
 			}
 		}
+		// Sanitize feed.Name
+		feed.Name = feedNameReplacer.Replace(feed.Name)
 	}
+
+	// other initializations
+	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
+
 	return &fm, nil
 }
 
@@ -204,8 +211,21 @@ func (fm *FeedsMonitor) UpdateFollowers() {
 }
 
 func (fm *FeedsMonitor) getFollowers(feed *Feed) error {
+
 	urlAccount := fmt.Sprintf("%s/api/v1/accounts/%d", fm.Instance.URL, feed.Id)
-	resp, err := http.Get(urlAccount)
+	if err := fm.validateURL(urlAccount); err != nil {
+		return fmt.Errorf("invalid instance URL: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlAccount, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -234,12 +254,31 @@ func (fm *FeedsMonitor) getInstanceLimit() (limit int) {
 		return
 	}
 
-	resp, err := http.Get(fm.Instance.URL + "/api/v1/instance")
+	instanceURL := fm.Instance.URL + "/api/v1/instance"
+	if err := fm.validateURL(instanceURL); err != nil {
+		fmt.Println("Invalid instance URL:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, instanceURL, nil)
+	if err != nil {
+		fmt.Println("Error creating request:", err)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Println("Error getting instance data from", fm.Instance.URL)
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Received non-OK HTTP status: %d\n", resp.StatusCode)
+		return
+	}
 
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
@@ -276,7 +315,12 @@ func (fm *FeedsMonitor) updateFeedData(feed *Feed) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fm.Instance.URL+"/api/v1/accounts/verify_credentials", nil)
+	credentialsURL := fm.Instance.URL + "/api/v1/accounts/verify_credentials"
+	if err := fm.validateURL(credentialsURL); err != nil {
+		return fmt.Errorf("%s Invalid credentials URL: %w", feed.Name, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, credentialsURL, nil)
 	if err != nil {
 		return fmt.Errorf("%s Unable to create new request: %w", feed.Name, err)
 	}
@@ -300,5 +344,29 @@ func (fm *FeedsMonitor) updateFeedData(feed *Feed) error {
 	feed.Id = jsoniter.Get(body, "id").ToInt64()
 	feed.Followers.Store(jsoniter.Get(body, "followers_count").ToInt64())
 
+	return nil
+}
+
+func (fm *FeedsMonitor) validateURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+
+	if u.Scheme != "https" {
+		return fmt.Errorf("only HTTPS URLs allowed")
+	}
+
+	// Validate path doesn't contain traversal
+	if strings.Contains(u.Path, "..") {
+		return fmt.Errorf("path traversal not allowed")
+	}
+
+	// Block private/internal IP ranges
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if ip.IsPrivate() || ip.IsLoopback() {
+			return fmt.Errorf("private/internal IPs not allowed")
+		}
+	}
 	return nil
 }

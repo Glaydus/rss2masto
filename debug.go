@@ -8,11 +8,11 @@ import (
 	"github.com/mitchellh/go-ps"
 )
 
-var __DEBUG__ = strings.HasPrefix(filepath.Base(os.Args[0]), "__debug_bin")
+var debugMode = strings.HasPrefix(filepath.Base(os.Args[0]), "__debug_bin")
 
 func init() {
-	if !__DEBUG__ {
-		__DEBUG__ = isDebugging()
+	if !debugMode {
+		debugMode = isDebugging()
 	}
 }
 

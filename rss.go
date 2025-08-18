@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -18,7 +19,7 @@ import (
 )
 
 const (
-	earlierDuration = -time.Hour * 24
+	earlierDuration = -time.Hour * 12
 	storageDuration = time.Hour * 24 * 7
 )
 
@@ -32,14 +33,14 @@ func (fm *FeedsMonitor) Start() {
 	if len(fm.Instance.Feeds) == 0 {
 		return
 	}
-	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
 
-	fm.wg.Add(len(fm.Instance.Feeds))
+	var wg sync.WaitGroup
+	wg.Add(len(fm.Instance.Feeds))
 
 	for _, feed := range fm.Instance.Feeds {
 		if feed.FeedUrl != "" && feed.Token != "" {
 			go func(f *Feed) {
-				defer fm.wg.Done()
+				defer wg.Done()
 				f.Progress.Add(1)
 				if f.Progress.Load() >= f.Interval {
 					f.Progress.Store(0)
@@ -48,10 +49,10 @@ func (fm *FeedsMonitor) Start() {
 				}
 			}(feed)
 		} else {
-			fm.wg.Done()
+			wg.Done()
 		}
 	}
-	fm.wg.Wait()
+	wg.Wait()
 
 	if fm.Instance.Save {
 		err := fm.SaveFeedsData()
@@ -92,7 +93,8 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		reTag, _ = regexp.Compile(f.HashLink)
 	}
 
-	limitUnixTime := time.Now().UTC().Add(earlierDuration).Unix()
+	now := time.Now().UTC()
+	limitUnixTime := now.Add(earlierDuration).Unix()
 
 	for i := len(feed.Items) - 1; i >= 0; i-- {
 		item := feed.Items[i]
@@ -102,6 +104,12 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		}
 
 		if pubUnixTime < limitUnixTime {
+			continue
+		}
+		if pubUnixTime > now.Unix() {
+			pubUnixTime = now.Unix()
+		}
+		if pubUnixTime < f.LastRun {
 			continue
 		}
 
@@ -157,7 +165,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 		}
 		if hashtags != "" {
 			sb.WriteString(hashtags)
-			sb.WriteString("\n")
+			sb.WriteString("\n\n")
 		}
 		sb.WriteString(item.Link)
 		msg := sb.String()
@@ -179,7 +187,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 			data.Set("language", lang)
 		}
 
-		if !__DEBUG__ {
+		if !debugMode {
 			func() {
 				ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
 				defer cancel()
@@ -199,10 +207,12 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 				if resp.StatusCode == http.StatusOK {
 					f.Count++
-					f.LastRun = pubUnixTime
 					f.SendTime = time.Now().In(fm.Location())
 					if Cache() != nil {
 						_ = Cache().Set(idempotencyKey, "1", storageDuration)
+					}
+					if f.LastRun < pubUnixTime {
+						f.LastRun = pubUnixTime
 					}
 					if f.LastRun > fm.LastMonit() {
 						fm.lastMonit.Store(f.LastRun)
@@ -240,6 +250,12 @@ func makeHashtags(item *gofeed.Item, f *Feed, re *regexp.Regexp) (hashtags strin
 			a := strings.Split(tag, ":")
 			for _, s := range a {
 				if !strings.ContainsAny(s, `-\/.`) {
+					if (tag == "Polska") || (tag == "*GLOWNA") {
+						if f.Prefix == "" {
+							continue
+						}
+						s = f.Prefix + s
+					}
 					aTags = append(aTags, s)
 				}
 			}
