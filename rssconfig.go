@@ -272,7 +272,7 @@ func (fm *FeedsMonitor) getInstanceLimit() (limit int) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, instanceURL, nil)
