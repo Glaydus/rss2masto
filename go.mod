@@ -1,6 +1,6 @@
 module github.com/glaydus/rss2masto
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
@@ -9,7 +9,7 @@ require (
 	github.com/mitchellh/go-ps v1.0.0
 	github.com/mmcdole/gofeed v1.2.1
 	github.com/redis/go-redis/v9 v9.3.0
-	golang.org/x/text v0.28.0
+	golang.org/x/text v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -22,5 +22,5 @@ require (
 	github.com/mmcdole/goxpp v1.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/net v0.46.0 // indirect
 )
