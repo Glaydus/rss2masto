@@ -68,6 +68,7 @@ func (fm *FeedsMonitor) Start() {
 	}
 }
 
+//gocyclo:ignore
 func (fm *FeedsMonitor) getFeed(f *Feed) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
@@ -256,12 +257,6 @@ func makeHashtags(item *gofeed.Item, f *Feed, re *regexp.Regexp) (hashtags strin
 			a := strings.Split(tag, ":")
 			for _, s := range a {
 				if !strings.ContainsAny(s, `-\/.`) {
-					if (tag == "Polska") || (tag == "*GLOWNA") {
-						if f.Prefix == "" {
-							continue
-						}
-						s = f.Prefix + s
-					}
 					aTags = append(aTags, s)
 				}
 			}

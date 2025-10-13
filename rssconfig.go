@@ -122,9 +122,19 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		fmt.Println(err)
 	}
 
+	// Set default values for feeds
+	fm.setDefaultValues()
+
+	// other initializations
+	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
+
+	return &fm, nil
+}
+
+func (fm *FeedsMonitor) setDefaultValues() {
+
 	feedNameReplacer := strings.NewReplacer("\n", "\\n", "\r", "\\r")
 
-	// Set default values for feeds
 	for _, feed := range fm.Instance.Feeds {
 		if feed.LastRun == 0 {
 			feed.LastRun = fm.LastMonit()
@@ -146,11 +156,6 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 		// Sanitize feed.Name
 		feed.Name = feedNameReplacer.Replace(feed.Name)
 	}
-
-	// other initializations
-	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
-
-	return &fm, nil
 }
 
 // LastCheck returns the Unix timestamp of the last check

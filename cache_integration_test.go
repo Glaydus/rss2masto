@@ -10,6 +10,8 @@ import (
 
 // TestCacheClient_Integration tests the cache client with a real Redis interface
 // This test requires a running Redis instance or can be skipped
+//
+//gocyclo:ignore
 func TestCacheClient_Integration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -135,7 +137,7 @@ func TestCacheClient_Integration(t *testing.T) {
 
 	t.Run("Clear", func(t *testing.T) {
 		cache.Set("test:clear:key", "value", time.Minute)
-		
+
 		err := cache.Clear()
 		if err != nil {
 			t.Fatalf("Clear failed: %v", err)
