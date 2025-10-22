@@ -23,10 +23,7 @@ const (
 	storageDuration = time.Hour * 24 * 7
 )
 
-var (
-	feedParser   = gofeed.NewParser()
-	strictPolicy = bluemonday.StrictPolicy()
-)
+var strictPolicy = bluemonday.StrictPolicy()
 
 // Start processes all feeds in parallel using goroutines
 // For each feed with valid URL and token:
@@ -74,7 +71,7 @@ func (fm *FeedsMonitor) getFeed(f *Feed) {
 	ctx, cancel := context.WithTimeout(context.Background(), fm.ctxTimeout)
 	defer cancel()
 
-	feed, err := feedParser.ParseURLWithContext(f.FeedUrl, ctx)
+	feed, err := fm.feedParser.ParseURLWithContext(f.FeedUrl, ctx)
 	if err != nil {
 		fmt.Println(f.Name, "Parsing error:", err)
 		return

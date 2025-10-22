@@ -14,6 +14,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+	"github.com/mmcdole/gofeed"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
@@ -30,6 +31,7 @@ type FeedsMonitor struct {
 		Feeds    []*Feed `yaml:"feed"`
 	} `yaml:"instance"`
 
+	feedParser *gofeed.Parser
 	ctxTimeout time.Duration
 	lastCheck  atomic.Int64
 	lastMonit  atomic.Int64
@@ -85,13 +87,17 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	if err != nil {
 		return nil, err
 	}
-	fm.lastMonit.Store(fm.Instance.Monit)
+
+	// Set up feed parser
+	fm.feedParser = gofeed.NewParser()
+	fm.feedParser.UserAgent = "rss2masto/1.0"
 
 	// Set LastMonit to now -55 min if not set or older than 1 hour
 	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 1 {
 		t := time.Now().UTC().Truncate(time.Minute).Add(time.Minute * time.Duration(-55))
-		fm.lastMonit.Store(t.Unix())
+		fm.Instance.Monit = t.Unix()
 	}
+	fm.lastMonit.Store(fm.Instance.Monit)
 
 	// load location for time formatting
 	fm.location, err = time.LoadLocation(fm.Instance.TimeZone)
@@ -127,6 +133,9 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 
 	// other initializations
 	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
+	if fm.ctxTimeout < 10*time.Second {
+		fm.ctxTimeout = 10 * time.Second
+	}
 
 	return &fm, nil
 }
