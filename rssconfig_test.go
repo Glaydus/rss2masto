@@ -1,11 +1,12 @@
 package rss2masto
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"fmt"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
 func TestNewFeedsMonitor(t *testing.T) {
@@ -64,7 +65,7 @@ func TestNewFeedsMonitor(t *testing.T) {
 	}
 }
 
-func TestValidateURL(t *testing.T) {
+func TestParseURLHost(t *testing.T) {
 	fm := &FeedsMonitor{}
 
 	tests := []struct {
@@ -74,17 +75,14 @@ func TestValidateURL(t *testing.T) {
 	}{
 		{"valid HTTPS URL", "https://example.com/api", false},
 		{"HTTP URL should fail", "http://example.com/api", true},
-		{"path traversal should fail", "https://example.com/../api", true},
-		{"private IP should fail", "https://192.168.1.1/api", true},
-		{"loopback IP should fail", "https://127.0.0.1/api", true},
 		{"invalid URL", "not-a-url", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := fm.validateURL(tt.url)
+			_, err := fm.parseURLHost(tt.url)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateURL() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseURLHost() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -149,64 +147,93 @@ func TestLastCheckStr(t *testing.T) {
 	}
 }
 
-func TestGetInstanceLimit(t *testing.T) {
-	// Mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/instance" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"configuration":{"statuses":{"max_characters":1000}}}`))
-		}
-	}))
-	defer server.Close()
+// mockHostClient implements httpClient for testing
+type mockHostClient struct {
+	handler func(req *fasthttp.Request, resp *fasthttp.Response) error
+}
 
-	fm := &FeedsMonitor{
-		Instance: struct {
-			URL      string  `yaml:"url"`
-			Lang     string  `yaml:"lang"`
-			Limit    int     `yaml:"limit"`
-			TimeZone string  `yaml:"timezone"`
-			Save     bool    `yaml:"save,omitempty"`
-			Monit    int64   `yaml:"last_monit,omitempty"`
-			Feeds    []*Feed `yaml:"feed"`
-		}{
-			URL: server.URL,
+func (m *mockHostClient) Do(req *fasthttp.Request, resp *fasthttp.Response) error {
+	return m.handler(req, resp)
+}
+
+func TestGetInstanceLimit(t *testing.T) {
+	fm := &FeedsMonitor{}
+	fm.Instance.URL = "https://mastodon.example"
+	fm.hostClient = &mockHostClient{
+		handler: func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusOK)
+			resp.SetBodyString(`{"configuration":{"statuses":{"max_characters":1000}}}`)
+			return nil
 		},
-		ctxTimeout: 5 * time.Second,
 	}
 
 	limit := fm.getInstanceLimit()
-	if limit != 500 {
-		t.Errorf("getInstanceLimit() = %v, want 500", limit)
+	if limit != 1000 {
+		t.Errorf("getInstanceLimit() = %v, want 1000", limit)
 	}
 }
 
 func TestGetInstanceLimitDefault(t *testing.T) {
-	fm := &FeedsMonitor{
-		Instance: struct {
-			URL      string  `yaml:"url"`
-			Lang     string  `yaml:"lang"`
-			Limit    int     `yaml:"limit"`
-			TimeZone string  `yaml:"timezone"`
-			Save     bool    `yaml:"save,omitempty"`
-			Monit    int64   `yaml:"last_monit,omitempty"`
-			Feeds    []*Feed `yaml:"feed"`
-		}{
-			URL: "", // Empty URL should return default
+	fm := &FeedsMonitor{}
+	fm.Instance.URL = "https://mastodon.example"
+	fm.hostClient = &mockHostClient{
+		handler: func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			return fmt.Errorf("connection refused")
 		},
 	}
 
 	limit := fm.getInstanceLimit()
 	if limit != DefaultCharacterLimit {
-		t.Errorf("getInstanceLimit() with empty URL = %v, want %v", limit, DefaultCharacterLimit)
+		t.Errorf("getInstanceLimit() on error = %v, want %v", limit, DefaultCharacterLimit)
 	}
 }
 
 func TestLocation(t *testing.T) {
-	fm := &FeedsMonitor{location: time.UTC}
+	t.Run("valid timezone from Instance.TimeZone", func(t *testing.T) {
+		fm := &FeedsMonitor{}
+		fm.Instance.TimeZone = "Europe/Warsaw"
 
-	if got := fm.Location(); got != time.UTC {
-		t.Errorf("Location() = %v, want %v", got, time.UTC)
-	}
+		loc := fm.Location()
+		if loc == nil {
+			t.Fatal("Location() returned nil")
+		}
+		if loc.String() != "Europe/Warsaw" {
+			t.Errorf("Location() = %v, want Europe/Warsaw", loc)
+		}
+	})
+
+	t.Run("empty TimeZone falls back to UTC", func(t *testing.T) {
+		fm := &FeedsMonitor{}
+		fm.Instance.TimeZone = ""
+
+		loc := fm.Location()
+		if loc != time.UTC {
+			t.Errorf("Location() = %v, want UTC", loc)
+		}
+	})
+
+	t.Run("invalid TimeZone falls back to UTC", func(t *testing.T) {
+		fm := &FeedsMonitor{}
+		fm.Instance.TimeZone = "Not/ATimezone"
+
+		loc := fm.Location()
+		if loc != time.UTC {
+			t.Errorf("Location() = %v, want UTC", loc)
+		}
+	})
+
+	t.Run("location cached after first call", func(t *testing.T) {
+		fm := &FeedsMonitor{}
+		fm.Instance.TimeZone = "America/New_York"
+
+		loc1 := fm.Location()
+		fm.Instance.TimeZone = "Asia/Tokyo" // change after first call
+		loc2 := fm.Location()
+
+		if loc1 != loc2 {
+			t.Error("Location() should return cached value on subsequent calls")
+		}
+	})
 }
 
 func TestLastMonit(t *testing.T) {

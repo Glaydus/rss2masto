@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	rediscache "github.com/go-redis/cache/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -33,21 +34,24 @@ func TestCacheClient_Integration(t *testing.T) {
 	// Clean up test database
 	defer client.FlushDB(context.Background())
 
-	cache := &CacheClient{
+	cc := &CacheClient{
 		client: client,
 		ctx:    context.Background(),
+		cache: rediscache.New(&rediscache.Options{
+			Redis: client,
+		}),
 	}
 
 	t.Run("Set and Get", func(t *testing.T) {
 		key := "test:integration:key"
 		value := "test_value"
 
-		err := cache.Set(key, value, time.Minute)
+		err := cc.Set(key, value, time.Minute)
 		if err != nil {
 			t.Fatalf("Set failed: %v", err)
 		}
 
-		result, err := cache.Get(key)
+		result, err := cc.Get(key)
 		if err != nil {
 			t.Fatalf("Get failed: %v", err)
 		}
@@ -59,13 +63,13 @@ func TestCacheClient_Integration(t *testing.T) {
 
 	t.Run("Exists", func(t *testing.T) {
 		key := "test:integration:exists"
-		cache.Set(key, "value", time.Minute)
+		cc.Set(key, "value", time.Minute)
 
-		if !cache.Exists(key) {
+		if !cc.Exists(key) {
 			t.Error("Key should exist")
 		}
 
-		if cache.Exists("nonexistent:key") {
+		if cc.Exists("nonexistent:key") {
 			t.Error("Nonexistent key should not exist")
 		}
 	})
@@ -78,12 +82,12 @@ func TestCacheClient_Integration(t *testing.T) {
 			{Score: 3.0, Member: "third"},
 		}
 
-		err := cache.ZAdd(key, members)
+		err := cc.ZAdd(key, members)
 		if err != nil {
 			t.Fatalf("ZAdd failed: %v", err)
 		}
 
-		result, err := cache.ZRevRange(key, 0, -1)
+		result, err := cc.ZRevRange(key, 0, -1)
 		if err != nil {
 			t.Fatalf("ZRevRange failed: %v", err)
 		}
@@ -101,12 +105,11 @@ func TestCacheClient_Integration(t *testing.T) {
 	})
 
 	t.Run("GetKeys", func(t *testing.T) {
-		// Set up test data
-		cache.Set("test:pattern:1", "value1", time.Minute)
-		cache.Set("test:pattern:2", "value2", time.Minute)
-		cache.Set("other:key", "value3", time.Minute)
+		cc.Set("test:pattern:1", "value1", time.Minute)
+		cc.Set("test:pattern:2", "value2", time.Minute)
+		cc.Set("other:key", "value3", time.Minute)
 
-		keys, err := cache.GetKeys("test:pattern:*")
+		keys, err := cc.GetKeys("test:pattern:*")
 		if err != nil {
 			t.Fatalf("GetKeys failed: %v", err)
 		}
@@ -118,10 +121,10 @@ func TestCacheClient_Integration(t *testing.T) {
 
 	t.Run("MGet", func(t *testing.T) {
 		keys := []string{"test:mget:1", "test:mget:2", "test:mget:nonexistent"}
-		cache.Set(keys[0], "value1", time.Minute)
-		cache.Set(keys[1], "value2", time.Minute)
+		cc.Set(keys[0], "value1", time.Minute)
+		cc.Set(keys[1], "value2", time.Minute)
 
-		results, err := cache.MGet(keys)
+		results, err := cc.MGet(keys)
 		if err != nil {
 			t.Fatalf("MGet failed: %v", err)
 		}
@@ -135,16 +138,21 @@ func TestCacheClient_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("Clear", func(t *testing.T) {
-		cache.Set("test:clear:key", "value", time.Minute)
+	t.Run("Delete", func(t *testing.T) {
+		key := "test:integration:delete"
+		cc.Set(key, "value", time.Minute)
 
-		err := cache.Clear()
-		if err != nil {
-			t.Fatalf("Clear failed: %v", err)
+		if !cc.Exists(key) {
+			t.Error("Key should exist before deletion")
 		}
 
-		if cache.Exists("test:clear:key") {
-			t.Error("Key should not exist after clear")
+		err := cc.Delete(key)
+		if err != nil {
+			t.Fatalf("Delete failed: %v", err)
+		}
+
+		if cc.Exists(key) {
+			t.Error("Key should not exist after deletion")
 		}
 	})
 }

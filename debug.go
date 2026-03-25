@@ -8,7 +8,7 @@ import (
 	"github.com/mitchellh/go-ps"
 )
 
-var debugMode = strings.HasPrefix(filepath.Base(os.Args[0]), "__debug_bin")
+var debugMode = strings.Contains(filepath.Base(os.Args[0]), "__debug_bin") || strings.Contains(filepath.Base(os.Args[0]), ".test")
 
 func init() {
 	if !debugMode {

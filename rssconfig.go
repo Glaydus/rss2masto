@@ -1,26 +1,33 @@
 package rss2masto
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/mmcdole/gofeed"
+	"github.com/valyala/fasthttp"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"gopkg.in/yaml.v3"
 )
 
+// FeedsMonitor holds the configuration and state for monitoring multiple RSS feeds
 type FeedsMonitor struct {
+	// Instance holds the Mastodon instance configuration and list of feeds to monitor
+	// The struct includes fields for:
+	// - URL: Mastodon instance URL
+	// - Lang: default language for posts
+	// - Limit: maximum characters per post
+	// - TimeZone: timezone for date formatting
+	// - Save: whether to save state to disk
+	// - Monit: last monitoring run timestamp
+	// - Feeds: list of feeds to monitor
 	Instance struct {
 		URL      string  `yaml:"url"`
 		Lang     string  `yaml:"lang"`
@@ -31,44 +38,115 @@ type FeedsMonitor struct {
 		Feeds    []*Feed `yaml:"feed"`
 	} `yaml:"instance"`
 
-	feedParser *gofeed.Parser
-	ctxTimeout time.Duration
+	Parser     *Parser
+	hostClient httpClient
+	isStarted  atomic.Bool
 	lastCheck  atomic.Int64
 	lastMonit  atomic.Int64
 	location   *time.Location
 }
 
+// Feed holds the configuration and state for a single RSS feed
+// The struct includes fields for:
+// - Name: feed identifier/name
+// - URL: RSS feed endpoint
+// - Token: Mastodon API access token
+// - Prefix: optional text to prepend to posts
+// - Visibility: post visibility level (public, unlisted, private)
+// - HashLink: whether to add hash link to posts
+// - ReplaceFrom/ReplaceTo: text replacement rules
+// - Interval: check interval in minutes
+// - LastRun: Unix timestamp of last check
+// - Count: number of items posted
+// - Id: Mastodon account ID
+// - SendTime: time when last post was sent
+// - Followers: concurrent follower count
+// - shedCounter: scheduled counter for posting
+// - etag: HTTP ETag for conditional requests
 type Feed struct {
-	Name        string       `yaml:"name"`
-	FeedUrl     string       `yaml:"url"`
-	Token       string       `yaml:"token"`
-	Prefix      string       `yaml:"prefix,omitempty"`
-	Visibility  string       `yaml:"visibility,omitempty"`
-	HashLink    string       `yaml:"hashlink,omitempty"`
-	ReplaceFrom string       `yaml:"replace_from,omitempty"`
-	ReplaceTo   string       `yaml:"replace_to,omitempty"`
-	Interval    int64        `yaml:"interval,omitempty"`
-	LastRun     int64        `yaml:"last_run,omitempty"`
-	Count       int64        `yaml:"-"`
-	Id          int64        `yaml:"-"`
-	Followers   atomic.Int64 `yaml:"-"`
-	Progress    atomic.Int64 `yaml:"-"`
-	SendTime    time.Time    `yaml:"-"`
+	Name        string                 `yaml:"name"`
+	URL         string                 `yaml:"url"`
+	Token       string                 `yaml:"token"`
+	Prefix      string                 `yaml:"prefix,omitempty"`
+	Visibility  string                 `yaml:"visibility,omitempty"`
+	HashLink    string                 `yaml:"hashlink,omitempty"`
+	ReplaceFrom string                 `yaml:"replace_from,omitempty"`
+	ReplaceTo   string                 `yaml:"replace_to,omitempty"`
+	Interval    int64                  `yaml:"interval,omitempty"`
+	LastRun     int64                  `yaml:"last_run,omitempty"`
+	Count       int64                  `yaml:"-"`
+	Id          int64                  `yaml:"-"`
+	SendTime    time.Time              `yaml:"-"`
+	Followers   atomic.Int64           `yaml:"-"`
+	shedCounter atomic.Int64           `yaml:"-"`
+	etag        atomic.Pointer[[]byte] `yaml:"-"`
 }
 
+// MastodonPost holds the data needed to post to Mastodon
+// This struct is used to marshal the request body for posting to Mastodon API
+type MastodonPost struct {
+	Status     string `json:"status"`
+	Visibility string `json:"visibility"`
+	Language   string `json:"language,omitempty"`
+}
+
+const DefaultUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 const DefaultCharacterLimit = 500 // default mastodon max character limit
 const DefaultCheckInterval = 10   // default check feed interval in minutes
 
 var (
-	configFile      = "./feed.yml"
-	visibilityTypes = map[string]struct{}{
-		"public":   {},
-		"unlisted": {},
-		"private":  {},
+	configFile      = "./feed.yaml"
+	visibilityTypes = map[string]bool{
+		"public":   true,
+		"unlisted": true,
+		"private":  true,
 	}
 	// use this to convert strings to title case (instead of deprecated strings.Title())
 	casesTitle cases.Caser
 )
+
+type httpClient interface {
+	Do(req *fasthttp.Request, resp *fasthttp.Response) error
+}
+
+// Parser wraps gofeed.Parser with an HTTP client and sync.Pool for efficient reuse
+type Parser struct {
+	Client     httpClient
+	parserPool sync.Pool
+}
+
+// NewParser creates a new RSS parser with optional custom HTTP client
+// If no client is provided, a default fasthttp.Client is created with:
+// - 1MB max response size
+// - 15s read/write timeouts
+// - 4096 concurrency limit
+// - 1-hour DNS cache duration
+func NewParser(c httpClient) *Parser {
+	if c == nil {
+		// Default production configuration
+		c = &fasthttp.Client{
+			MaxResponseBodySize:      1024 * 1024, // 1MB limit
+			ReadBufferSize:           4096 * 2,    // 2 * default
+			MaxConnsPerHost:          10,
+			ReadTimeout:              15 * time.Second,
+			WriteTimeout:             15 * time.Second,
+			NoDefaultUserAgentHeader: true,
+			// increase DNS cache time to an hour instead of default minute
+			Dial: (&fasthttp.TCPDialer{
+				Concurrency:      4096,
+				DNSCacheDuration: time.Hour,
+			}).Dial,
+		}
+	}
+	return &Parser{
+		Client: c,
+		parserPool: sync.Pool{
+			New: func() any {
+				return gofeed.NewParser()
+			},
+		},
+	}
+}
 
 // NewFeedsMonitor creates and initializes a new FeedsMonitor instance by:
 // - Loading and parsing the feed configuration from YAML file
@@ -87,24 +165,30 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	if err != nil {
 		return nil, err
 	}
+	instanceHost, err := fm.parseURLHost(fm.Instance.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid instance URL: %w", err)
+	}
 
-	// Set up feed parser
-	fm.feedParser = gofeed.NewParser()
-	fm.feedParser.UserAgent = "rss2masto/1.0"
+	fm.hostClient = &fasthttp.HostClient{
+		IsTLS:                  true,
+		Addr:                   instanceHost + ":443",
+		Name:                   "rss2masto",
+		ReadTimeout:            15 * time.Second,
+		WriteTimeout:           15 * time.Second,
+		DisablePathNormalizing: true,
+		Dial: (&fasthttp.TCPDialer{
+			DNSCacheDuration: time.Hour,
+		}).Dial,
+	}
+	fm.Parser = NewParser(nil)
 
-	// Set LastMonit to now -55 min if not set or older than 1 hour
-	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 1 {
-		t := time.Now().UTC().Truncate(time.Minute).Add(time.Minute * time.Duration(-55))
+	// Set LastMonit to 6 hours ago if not set or older than 6 hours
+	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 6 {
+		t := time.Now().UTC().Truncate(time.Minute).Add(-6 * time.Hour)
 		fm.Instance.Monit = t.Unix()
 	}
 	fm.lastMonit.Store(fm.Instance.Monit)
-
-	// load location for time formatting
-	fm.location, err = time.LoadLocation(fm.Instance.TimeZone)
-	if err != nil {
-		fmt.Println(err)
-		fm.location = time.UTC
-	}
 
 	// set language tag for case conversion
 	langTag := language.English
@@ -117,54 +201,28 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	}
 	casesTitle = cases.Title(langTag, cases.NoLower)
 
-	// Set instance characters limit if not set
-	if fm.Instance.Limit == 0 {
-		fm.Instance.Limit = fm.getInstanceLimit()
-	}
-
-	// Set user ID on feed
-	err = fm.setFeedsId()
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	// Set default values for feeds
-	fm.setDefaultValues()
-
-	// other initializations
-	fm.ctxTimeout = time.Duration(60/(len(fm.Instance.Feeds)+1)) * time.Second
-	if fm.ctxTimeout < 10*time.Second {
-		fm.ctxTimeout = 10 * time.Second
-	}
+	// Set default values for feeds and get their IDs
+	go fm.setDefaults()
 
 	return &fm, nil
 }
 
-func (fm *FeedsMonitor) setDefaultValues() {
-
-	feedNameReplacer := strings.NewReplacer("\n", "\\n", "\r", "\\r")
-
-	for _, feed := range fm.Instance.Feeds {
-		if feed.LastRun == 0 {
-			feed.LastRun = fm.LastMonit()
-		}
-		if feed.Interval == 0 {
-			feed.Interval = DefaultCheckInterval
-		}
-		feed.LastRun += 60 * feed.Interval
-
-		if _, ok := visibilityTypes[feed.Visibility]; !ok {
-			feed.Visibility = "private"
-		}
-		if feed.Name == "" {
-			u, err := url.Parse(feed.FeedUrl)
-			if err == nil {
-				feed.Name = u.Hostname()
-			}
-		}
-		// Sanitize feed.Name
-		feed.Name = feedNameReplacer.Replace(feed.Name)
+// NewTestFeed creates a new feed with default values for testing purposes
+// This function is intended for testing and development purposes only
+func NewTestFeed(name, url string) *Feed {
+	feed := &Feed{
+		Name: name,
+		URL:  url,
 	}
+	empty := make([]byte, 0)
+	feed.etag.Store(&empty)
+	return feed
+}
+
+// ETag returns the ETag for the feed
+// It returns a copy of the ETag byte slice to prevent external modification
+func (f *Feed) ETag() []byte {
+	return *f.etag.Load()
 }
 
 // LastCheck returns the Unix timestamp of the last check
@@ -198,6 +256,14 @@ func (fm *FeedsMonitor) FeedIndex(name string) int {
 
 // Location returns the timezone location used for time formatting
 func (fm *FeedsMonitor) Location() *time.Location {
+	if fm.location == nil {
+		var err error
+		fm.location, err = time.LoadLocation(fm.Instance.TimeZone)
+		if err != nil {
+			fmt.Println(err)
+			fm.location = time.UTC
+		}
+	}
 	return fm.location
 }
 
@@ -217,182 +283,139 @@ func (fm *FeedsMonitor) SaveFeedsData() error {
 
 // UpdateFollowers concurrently updates the follower counts for all feeds
 func (fm *FeedsMonitor) UpdateFollowers() {
-	if fm.Instance.URL == "" {
-		return
-	}
-
 	var wg sync.WaitGroup
 	for _, feed := range fm.Instance.Feeds {
 		if feed.Id > 0 {
-			wg.Add(1)
-			go func(feed *Feed) {
-				defer wg.Done()
+			wg.Go(func() {
 				err := fm.getFollowers(feed)
 				if err != nil {
-					fmt.Println(feed.Name, err)
+					fmt.Printf("[%s] Error getting followers: %v\n", feed.Name, err)
 				}
-			}(feed)
+			})
 		}
 	}
 	wg.Wait()
 }
 
+// getFollowers gets the followers count for a feed from the Mastodon API
 func (fm *FeedsMonitor) getFollowers(feed *Feed) error {
-	urlAccount := fmt.Sprintf("%s/api/v1/accounts/%d", fm.Instance.URL, feed.Id)
-	if err := fm.validateURL(urlAccount); err != nil {
-		return fmt.Errorf("invalid instance URL: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlAccount, nil)
+	b, err := fm.GetFromInstance(fmt.Sprintf("/api/v1/accounts/%d", feed.Id))
 	if err != nil {
 		return err
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s Received non-OK HTTP status: %d", feed.Name, resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	followersCount := jsoniter.Get(body, "followers_count")
-	if followersCount.ValueType() != jsoniter.NumberValue {
-		return fmt.Errorf("%s JSON not having number value", feed.Name)
-	}
-	feed.Followers.Store(followersCount.ToInt64())
+	feed.Followers.Store(jsoniter.Get(b, "followers_count").ToInt64())
 	return nil
 }
 
+// setDefaults sets default values for feeds that don't have them set
+func (fm *FeedsMonitor) setDefaults() {
+
+	// Set instance characters limit if not set
+	if fm.Instance.Limit == 0 {
+		fm.Instance.Limit = fm.getInstanceLimit()
+	}
+
+	feedNameReplacer := strings.NewReplacer("\n", "\\n", "\r", "\\r")
+
+	for _, feed := range fm.Instance.Feeds {
+		if feed.LastRun == 0 {
+			feed.LastRun = fm.LastMonit()
+		}
+		if feed.Interval == 0 {
+			feed.Interval = DefaultCheckInterval
+		}
+
+		if !visibilityTypes[feed.Visibility] {
+			feed.Visibility = "private"
+		}
+
+		if feed.Name == "" {
+			url := fasthttp.AcquireURI()
+			defer fasthttp.ReleaseURI(url)
+
+			err := url.Parse(nil, s2b(feed.URL))
+			if err == nil {
+				feed.Name = string(url.Host())
+			}
+		}
+		// Sanitize feed.Name
+		feed.Name = feedNameReplacer.Replace(feed.Name)
+
+		// Set empty etag
+		empty := make([]byte, 0)
+		feed.etag.Store(&empty)
+
+		// Update feed data including ID and followers count
+		if err := fm.updateFeedData(feed); err != nil {
+			fmt.Println(err)
+		}
+	}
+}
+
 // Get instance characters limit
+// If the instance returns a valid limit, it's used; otherwise, the default limit is returned
 func (fm *FeedsMonitor) getInstanceLimit() (limit int) {
 	limit = DefaultCharacterLimit
 
-	if fm.Instance.URL == "" {
-		return
-	}
-
-	instanceURL := fm.Instance.URL + "/api/v1/instance"
-	if err := fm.validateURL(instanceURL); err != nil {
-		fmt.Println("Invalid instance URL:", err)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, instanceURL, nil)
+	b, err := fm.GetFromInstance("/api/v1/instance")
 	if err != nil {
-		fmt.Println("Error creating request:", err)
+		fmt.Println("Error getting instance data from", fm.Instance.URL, ":", err)
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Println("Error getting instance data from", fm.Instance.URL)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Received non-OK HTTP status: %d\n", resp.StatusCode)
-		return
-	}
-
-	body, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return
-	}
-
-	i := jsoniter.Get(body, "configuration", "statuses", "max_characters").ToInt()
+	i := jsoniter.Get(b, "configuration", "statuses", "max_characters").ToInt()
 	if i > 0 {
 		limit = i
 	}
 	return
 }
 
-func (fm *FeedsMonitor) setFeedsId() error {
-	if fm.Instance.URL == "" {
-		return fmt.Errorf("instance URL is empty")
-	}
-
-	for _, feed := range fm.Instance.Feeds {
-		if err := fm.updateFeedData(feed); err != nil {
-			fmt.Println(err)
-			continue
-		}
-	}
-
-	return nil
-}
-
+// updateFeedData gets the Mastodon account ID and followers count for a feed
+// The function verifies the token and retrieves the account ID and followers count
 func (fm *FeedsMonitor) updateFeedData(feed *Feed) error {
 	if feed.Token == "" {
-		return nil
+		return fmt.Errorf("[%s] Missing token", feed.Name)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	credentialsURL := fm.Instance.URL + "/api/v1/accounts/verify_credentials"
-	if err := fm.validateURL(credentialsURL); err != nil {
-		return fmt.Errorf("%s Invalid credentials URL: %w", feed.Name, err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, credentialsURL, nil)
+	b, err := fm.GetFromInstance("/api/v1/accounts/verify_credentials", feed.Token)
 	if err != nil {
-		return fmt.Errorf("%s Unable to create new request: %w", feed.Name, err)
+		return fmt.Errorf("[%s] Unable to get credentials: %w", feed.Name, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+feed.Token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%s Unable to execute request: %w", feed.Name, err)
+	id := jsoniter.Get(b, "id").ToInt64()
+	if id == 0 {
+		return fmt.Errorf("[%s] Invalid token", feed.Name)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s Received non-200 status code: %d", feed.Name, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("%s Unable to read response body: %w", feed.Name, err)
-	}
-
-	feed.Id = jsoniter.Get(body, "id").ToInt64()
-	feed.Followers.Store(jsoniter.Get(body, "followers_count").ToInt64())
+	feed.Id = id
+	feed.Followers.Store(jsoniter.Get(b, "followers_count").ToInt64())
 
 	return nil
 }
 
-func (fm *FeedsMonitor) validateURL(rawURL string) error {
-	u, err := url.Parse(rawURL)
+// parseURLHost parses a URL and returns the host portion
+// It validates that the URL uses HTTPS scheme and has no path traversal attempts
+func (fm *FeedsMonitor) parseURLHost(rawURL string) (string, error) {
+	url := fasthttp.AcquireURI()
+	defer fasthttp.ReleaseURI(url)
+
+	err := url.Parse(nil, s2b(rawURL))
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	if u.Scheme != "https" {
-		return fmt.Errorf("only HTTPS URLs allowed")
+	if b2s(url.Scheme()) != "https" {
+		return "", fmt.Errorf("invalid URL scheme: %s", url.Scheme())
 	}
 
 	// Validate path doesn't contain traversal
-	if strings.Contains(u.Path, "..") {
-		return fmt.Errorf("path traversal not allowed")
+	if strings.Contains(b2s(url.Path()), "../") {
+		return "", fmt.Errorf("path traversal not allowed")
 	}
+	return string(url.Host()), nil
+}
 
-	// Block private/internal IP ranges
-	if ip := net.ParseIP(u.Hostname()); ip != nil {
-		if ip.IsPrivate() || ip.IsLoopback() {
-			return fmt.Errorf("private/internal IPs not allowed")
-		}
-	}
-	return nil
+func b2s(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
+func s2b(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }

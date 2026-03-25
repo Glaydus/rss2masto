@@ -1,15 +1,13 @@
 package rss2masto
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
 	"regexp"
-	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/valyala/fasthttp"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -19,9 +17,9 @@ func TestHashString(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"test", "5754696928334414137"},
-		{"", "17241709254077376921"},
-		{"hello world", "5020219685658847592"},
+		{"test", "11441948532827618368"},
+		{"", "3244421341483603138"},
+		{"hello world", "15296390279056496779"},
 	}
 
 	for _, tt := range tests {
@@ -34,42 +32,7 @@ func TestHashString(t *testing.T) {
 	}
 }
 
-func TestCreateRequest(t *testing.T) {
-	ctx := context.Background()
-	url := "https://mastodon.social"
-	key := "test-key"
-	token := "test-token"
-	data := strings.NewReader("status=test")
-
-	req, err := createRequest(ctx, url, key, token, data)
-	if err != nil {
-		t.Fatalf("createRequest() error = %v", err)
-	}
-
-	if req.Method != http.MethodPost {
-		t.Errorf("Expected POST method, got %s", req.Method)
-	}
-
-	expectedURL := "https://mastodon.social/api/v1/statuses"
-	if req.URL.String() != expectedURL {
-		t.Errorf("Expected URL %s, got %s", expectedURL, req.URL.String())
-	}
-
-	if auth := req.Header.Get("Authorization"); auth != "Bearer test-token" {
-		t.Errorf("Expected Authorization 'Bearer test-token', got %s", auth)
-	}
-
-	if idempotency := req.Header.Get("Idempotency-Key"); idempotency != "test-key" {
-		t.Errorf("Expected Idempotency-Key 'test-key', got %s", idempotency)
-	}
-
-	if contentType := req.Header.Get("Content-Type"); contentType != "application/x-www-form-urlencoded" {
-		t.Errorf("Expected Content-Type 'application/x-www-form-urlencoded', got %s", contentType)
-	}
-}
-
 func TestMakeHashtags(t *testing.T) {
-	// Initialize casesTitle for testing
 	casesTitle = cases.Title(language.English, cases.NoLower)
 
 	tests := []struct {
@@ -80,39 +43,28 @@ func TestMakeHashtags(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "with categories",
-			item: &gofeed.Item{
-				Categories: []string{"Technology", "Programming"},
-			},
+			name:     "with categories",
+			item:     &gofeed.Item{Categories: []string{"Technology", "Programming"}},
 			feed:     &Feed{},
-			regex:    nil,
 			expected: "#Technology #Programming",
 		},
 		{
-			name: "with prefix",
-			item: &gofeed.Item{
-				Categories: []string{"Tech"},
-			},
+			name:     "with prefix",
+			item:     &gofeed.Item{Categories: []string{"Tech"}},
 			feed:     &Feed{Prefix: "Go"},
-			regex:    nil,
 			expected: "#Tech #GoTech",
 		},
 		{
-			name: "no categories, with regex match",
-			item: &gofeed.Item{
-				Link: "https://example.com/posts/golang",
-			},
+			name:     "no categories, with regex match",
+			item:     &gofeed.Item{Link: "https://example.com/posts/golang"},
 			feed:     &Feed{},
 			regex:    regexp.MustCompile(`/posts/([^/]+)`),
 			expected: "#golang",
 		},
 		{
-			name: "no categories, no regex match",
-			item: &gofeed.Item{
-				Link: "https://example.com/posts/",
-			},
+			name:     "no categories, no regex match",
+			item:     &gofeed.Item{Link: "https://example.com/posts/"},
 			feed:     &Feed{},
-			regex:    nil,
 			expected: "",
 		},
 	}
@@ -127,97 +79,160 @@ func TestMakeHashtags(t *testing.T) {
 	}
 }
 
-func TestStart(t *testing.T) {
-	// Test with empty feeds
-	fm := &FeedsMonitor{
-		Instance: struct {
-			URL      string  `yaml:"url"`
-			Lang     string  `yaml:"lang"`
-			Limit    int     `yaml:"limit"`
-			TimeZone string  `yaml:"timezone"`
-			Save     bool    `yaml:"save,omitempty"`
-			Monit    int64   `yaml:"last_monit,omitempty"`
-			Feeds    []*Feed `yaml:"feed"`
-		}{
-			Feeds: []*Feed{},
-		},
-	}
-
+func TestStart_EmptyFeeds(t *testing.T) {
+	fm := &FeedsMonitor{}
+	fm.Instance.Feeds = []*Feed{}
 	// Should return immediately with no feeds
 	fm.Start()
+}
 
-	// Test with feeds but no URL/token
+func TestStart_FeedsWithoutURLOrToken(t *testing.T) {
+	fm := &FeedsMonitor{}
 	fm.Instance.Feeds = []*Feed{
-		{Name: "Test", FeedUrl: "", Token: ""},
+		{Name: "Test", URL: "", Token: ""},
 	}
-
 	fm.Start() // Should complete without error
 }
 
-func TestGetFeedWithMockServer(t *testing.T) {
-	// Create mock RSS server
-	rssContent := `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-<channel>
+func TestFetchAndParse(t *testing.T) {
+	const validRSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
 <title>Test Feed</title>
-<item>
-<title>Test Item</title>
-<description>Test description</description>
-<link>https://example.com/item1</link>
-<guid>item1</guid>
-<pubDate>` + time.Now().Format(time.RFC1123Z) + `</pubDate>
-</item>
-</channel>
-</rss>`
+<item><title>Item 1</title><link>https://example.com/1</link><guid>guid1</guid>
+<pubDate>Mon, 01 Jan 2024 12:00:00 +0000</pubDate></item>
+</channel></rss>`
 
-	rssServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/rss+xml")
-		w.Write([]byte(rssContent))
-	}))
-	defer rssServer.Close()
-
-	// Create mock Mastodon server
-	mastodonServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/statuses" {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"id":"123"}`))
+	newParser := func(handler func(*fasthttp.Request, *fasthttp.Response) error) *Parser {
+		return &Parser{
+			Client:     &mockHostClient{handler: handler},
+			parserPool: sync.Pool{New: func() any { return gofeed.NewParser() }},
 		}
-	}))
-	defer mastodonServer.Close()
-
-	fm := &FeedsMonitor{
-		Instance: struct {
-			URL      string  `yaml:"url"`
-			Lang     string  `yaml:"lang"`
-			Limit    int     `yaml:"limit"`
-			TimeZone string  `yaml:"timezone"`
-			Save     bool    `yaml:"save,omitempty"`
-			Monit    int64   `yaml:"last_monit,omitempty"`
-			Feeds    []*Feed `yaml:"feed"`
-		}{
-			URL:   mastodonServer.URL,
-			Limit: 500,
-			Lang:  "en",
-		},
-		feedParser: gofeed.NewParser(),
-		ctxTimeout: 5 * time.Second,
-		location:   time.UTC,
 	}
 
-	feed := &Feed{
-		Name:       "Test Feed",
-		FeedUrl:    rssServer.URL,
-		Token:      "test-token",
-		Visibility: "public",
-		LastRun:    time.Now().Add(-time.Hour).Unix(),
-	}
+	t.Run("200 OK parses feed", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusOK)
+			resp.SetBodyString(validRSS)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
 
-	// Test getFeed function
-	fm.getFeed(feed)
+		result := p.FetchAndParse(feed)
 
-	// Verify that the feed was processed (Count should be incremented in non-debug mode)
-	// Since we're likely in debug mode during testing, we can't verify the count
-	// but we can verify the function completed without panic
+		if result == nil {
+			t.Fatal("expected parsed feed, got nil")
+		}
+		if result.Title != "Test Feed" {
+			t.Errorf("Title = %q, want %q", result.Title, "Test Feed")
+		}
+		if len(result.Items) != 1 {
+			t.Errorf("Items count = %d, want 1", len(result.Items))
+		}
+	})
+
+	t.Run("200 OK with ETag stores etag in feed", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusOK)
+			resp.Header.Set("ETag", `"abc123"`)
+			resp.SetBodyString(validRSS)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+
+		p.FetchAndParse(feed)
+
+		if string(feed.ETag()) != `"abc123"` {
+			t.Errorf("ETag = %q, want %q", feed.ETag(), `"abc123"`)
+		}
+	})
+
+	t.Run("If-None-Match sent when etag present", func(t *testing.T) {
+		var receivedIfNoneMatch string
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			receivedIfNoneMatch = string(req.Header.Peek("If-None-Match"))
+			resp.SetStatusCode(fasthttp.StatusNotModified)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+		etag := []byte(`"abc123"`)
+		feed.etag.Store(&etag)
+
+		result := p.FetchAndParse(feed)
+
+		if result != nil {
+			t.Error("expected nil for 304 Not Modified")
+		}
+		if receivedIfNoneMatch != `"abc123"` {
+			t.Errorf("If-None-Match = %q, want %q", receivedIfNoneMatch, `"abc123"`)
+		}
+	})
+
+	t.Run("304 Not Modified returns nil", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusNotModified)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+
+		if result := p.FetchAndParse(feed); result != nil {
+			t.Error("expected nil for 304 Not Modified")
+		}
+	})
+
+	t.Run("same ETag in response does not overwrite", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusOK)
+			resp.Header.Set("ETag", `"abc123"`)
+			resp.SetBodyString(validRSS)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+		original := []byte(`"abc123"`)
+		feed.etag.Store(&original)
+
+		p.FetchAndParse(feed)
+
+		// pointer should be the same original slice (not replaced)
+		if &feed.ETag()[0] != &original[0] {
+			t.Error("etag pointer changed despite same value")
+		}
+	})
+
+	t.Run("non-200/304 status returns nil", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusInternalServerError)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+
+		if result := p.FetchAndParse(feed); result != nil {
+			t.Errorf("expected nil for 500, got %v", result)
+		}
+	})
+
+	t.Run("connection error returns nil", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			return fmt.Errorf("connection refused")
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+
+		if result := p.FetchAndParse(feed); result != nil {
+			t.Error("expected nil on connection error")
+		}
+	})
+
+	t.Run("invalid XML returns nil", func(t *testing.T) {
+		p := newParser(func(req *fasthttp.Request, resp *fasthttp.Response) error {
+			resp.SetStatusCode(fasthttp.StatusOK)
+			resp.SetBodyString(`not valid xml at all`)
+			return nil
+		})
+		feed := NewTestFeed("te", "https://example.com/feed.xml")
+
+		if result := p.FetchAndParse(feed); result != nil {
+			t.Error("expected nil for invalid XML")
+		}
+	})
 }
 
 func TestMakeHashtagsEdgeCases(t *testing.T) {
@@ -231,82 +246,64 @@ func TestMakeHashtagsEdgeCases(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "categories with special characters filtered",
-			item: &gofeed.Item{
-				Categories: []string{"Tech-News", "AI/ML", "Web.Dev"},
-			},
+			name:     "categories with special characters filtered",
+			item:     &gofeed.Item{Categories: []string{"Tech-News", "AI/ML", "Web.Dev"}},
 			feed:     &Feed{},
 			expected: "",
 		},
 		{
-			name: "replacer converts ' - ' to space",
-			item: &gofeed.Item{
-				Categories: []string{"Tech - News"},
-			},
+			name:     "replacer converts ' - ' to space",
+			item:     &gofeed.Item{Categories: []string{"Tech - News"}},
 			feed:     &Feed{},
 			expected: "#TechNews",
 		},
 		{
-			name: "replacer converts ' i ' to ':'",
-			item: &gofeed.Item{
-				Categories: []string{"Tech i News"},
-			},
+			name:     "replacer converts ' i ' to ':'",
+			item:     &gofeed.Item{Categories: []string{"Tech i News"}},
 			feed:     &Feed{},
 			expected: "#Tech #News",
 		},
 		{
-			name: "prefix added when not present",
-			item: &gofeed.Item{
-				Categories: []string{"Polska"},
-			},
+			name:     "prefix added when not present",
+			item:     &gofeed.Item{Categories: []string{"Polska"}},
 			feed:     &Feed{Prefix: "PL"},
 			expected: "#Polska #PLPolska",
 		},
 		{
-			name: "prefix not duplicated",
-			item: &gofeed.Item{
-				Categories: []string{"PLPolska"},
-			},
+			name:     "prefix not duplicated",
+			item:     &gofeed.Item{Categories: []string{"PLPolska"}},
 			feed:     &Feed{Prefix: "PL"},
 			expected: "#PLPolska",
 		},
 		{
-			name: "colon splits tags",
-			item: &gofeed.Item{
-				Categories: []string{"Tech:News:Update"},
-			},
+			name:     "colon splits tags",
+			item:     &gofeed.Item{Categories: []string{"Tech:News:Update"}},
 			feed:     &Feed{},
 			expected: "#Tech #News #Update",
 		},
 		{
-			name: "regex extracts from link",
-			item: &gofeed.Item{
-				Link: "https://example.com/category/golang",
-			},
+			name:     "regex extracts from link",
+			item:     &gofeed.Item{Link: "https://example.com/category/golang"},
 			feed:     &Feed{},
 			regex:    regexp.MustCompile(`/category/([^/]+)`),
 			expected: "#golang",
 		},
 		{
-			name: "regex skips tags with hyphen",
-			item: &gofeed.Item{
-				Link: "https://example.com/tag/go-lang",
-			},
+			name:     "regex skips tags with hyphen",
+			item:     &gofeed.Item{Link: "https://example.com/tag/go-lang"},
 			feed:     &Feed{},
 			regex:    regexp.MustCompile(`/tag/([^/]+)`),
 			expected: "",
 		},
 		{
-			name: "empty categories with no regex",
-			item: &gofeed.Item{},
+			name:     "empty categories with no regex",
+			item:     &gofeed.Item{},
 			feed:     &Feed{},
 			expected: "",
 		},
 		{
-			name: "whitespace trimmed",
-			item: &gofeed.Item{
-				Categories: []string{"  Tech  ", "  News  "},
-			},
+			name:     "whitespace trimmed",
+			item:     &gofeed.Item{Categories: []string{"  Tech  ", "  News  "}},
 			feed:     &Feed{},
 			expected: "#Tech #News",
 		},

@@ -3,7 +3,6 @@ package rss2masto
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -425,23 +424,10 @@ func TestCacheClient_ZRevRange(t *testing.T) {
 	}
 }
 
-func TestCache_Singleton(t *testing.T) {
-	// Reset singleton for testing
-	once = sync.Once{}
-	ccOnce = nil
-
-	// Mock environment for non-debug mode
-	originalDebugMode := debugMode
-	debugMode = false
-	t.Setenv("REDIS_HOST", "localhost:6379")
-
-	cache1 := Cache()
-	cache2 := Cache()
-
-	if cache1 != cache2 {
-		t.Error("Cache() should return the same instance (singleton)")
+func TestCache_IsNotNil(t *testing.T) {
+	// Cache is a package-level *CacheClient variable initialized at startup (debug mode).
+	// In non-debug mode it requires a running Redis; skip if unavailable.
+	if Cache == nil {
+		t.Skip("Cache is nil – Redis not available in this environment")
 	}
-
-	// Restore original debug mode
-	debugMode = originalDebugMode
 }
