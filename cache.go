@@ -20,7 +20,10 @@ type CacheClient struct {
 // Cache is the global cache client
 var Cache *CacheClient = newCache()
 
-const storageDuration = time.Hour * 24 * 7
+const (
+	storageDuration = 7 * 24 * time.Hour
+	twoYearDuration = 2 * 365.25 * 24 * time.Hour
+)
 
 func newCache() *CacheClient {
 	var opt *redis.Options
@@ -46,7 +49,9 @@ func newCache() *CacheClient {
 	opt.PoolSize = 20
 	opt.MinIdleConns = 5
 	opt.PoolTimeout = 4 * time.Second
-	opt.ConnMaxIdleTime = 5 * time.Minute
+	opt.DialTimeout = 5 * time.Second
+	opt.ConnMaxIdleTime = 30 * time.Second
+	opt.ConnMaxLifetime = 5 * time.Minute
 
 	client := redis.NewClient(opt)
 
@@ -143,7 +148,7 @@ func (c *CacheClient) Load(key string, value any) error {
 	return c.cache.Get(c.ctx, key, value)
 }
 
-// Store saves a value in the cache with the given key and a 12 hour TTL
+// Store saves a value in the cache with the given key and a 7 day TTL
 func (c *CacheClient) Store(key string, value any) error {
 	return c.cache.Set(&cache.Item{
 		Ctx:   c.ctx,
@@ -155,7 +160,6 @@ func (c *CacheClient) Store(key string, value any) error {
 
 // Save saves a value in the cache with the given key and a 2 year TTL
 func (c *CacheClient) Save(key string, value any) error {
-	twoYearDuration := time.Hour * 24 * 365 * 2
 	return c.cache.Set(&cache.Item{
 		Ctx:   c.ctx,
 		Key:   key,
