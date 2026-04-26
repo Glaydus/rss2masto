@@ -24,7 +24,7 @@ A Go library for publishing RSS/Atom feed items as Mastodon posts. Designed to h
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.25+
 - Redis (used for deduplication and caching)
 
 ## Installation
@@ -87,6 +87,7 @@ instance:
       interval: 10                     # check every N scheduler ticks (e.g. 10 = every 10 minutes if ticker is 1 min)
       visibility: public               # public | unlisted | private
       prefix: Tech                     # optional hashtag prefix added to every generated tag
+      hashtag:                         # static hashtag always added to every post from this feed
       hashlink:                        # regex with one capture group — extracts hashtag from item URL
       replace_from:                    # regex applied to post description
       replace_to:                      # replacement string (used with replace_from)
@@ -113,6 +114,7 @@ instance:
 | `feed.interval` | no | `10` | Scheduler ticks between checks |
 | `feed.visibility` | no | `private` | Mastodon post visibility |
 | `feed.prefix` | no | — | Prefix added to each generated hashtag |
+| `feed.hashtag` | no | — | Static hashtag always included in every post from this feed |
 | `feed.hashlink` | no | — | Regex to extract a hashtag from the item link |
 | `feed.replace_from` | no | — | Regex pattern applied to post description |
 | `feed.replace_to` | no | — | Replacement string for `replace_from` matches |

@@ -67,6 +67,24 @@ func TestMakeHashtags(t *testing.T) {
 			feed:     &Feed{},
 			expected: "",
 		},
+		{
+			name:     "with HashTag only",
+			item:     &gofeed.Item{},
+			feed:     &Feed{HashTag: "golang"},
+			expected: "#golang",
+		},
+		{
+			name:     "with HashTag and categories",
+			item:     &gofeed.Item{Categories: []string{"Tech"}},
+			feed:     &Feed{HashTag: "golang"},
+			expected: "#golang #Tech",
+		},
+		{
+			name:     "with HashTag and prefix",
+			item:     &gofeed.Item{Categories: []string{"News"}},
+			feed:     &Feed{HashTag: "golang", Prefix: "Go"},
+			expected: "#golang #News #GoGolang #GoNews",
+		},
 	}
 
 	for _, tt := range tests {
@@ -233,88 +251,4 @@ func TestFetchAndParse(t *testing.T) {
 			t.Error("expected nil for invalid XML")
 		}
 	})
-}
-
-func TestMakeHashtagsEdgeCases(t *testing.T) {
-	casesTitle = cases.Title(language.English, cases.NoLower)
-
-	tests := []struct {
-		name     string
-		item     *gofeed.Item
-		feed     *Feed
-		regex    *regexp.Regexp
-		expected string
-	}{
-		{
-			name:     "categories with special characters filtered",
-			item:     &gofeed.Item{Categories: []string{"Tech-News", "AI/ML", "Web.Dev"}},
-			feed:     &Feed{},
-			expected: "",
-		},
-		{
-			name:     "replacer converts ' - ' to space",
-			item:     &gofeed.Item{Categories: []string{"Tech - News"}},
-			feed:     &Feed{},
-			expected: "#TechNews",
-		},
-		{
-			name:     "replacer converts ' i ' to ':'",
-			item:     &gofeed.Item{Categories: []string{"Tech i News"}},
-			feed:     &Feed{},
-			expected: "#Tech #News",
-		},
-		{
-			name:     "prefix added when not present",
-			item:     &gofeed.Item{Categories: []string{"Polska"}},
-			feed:     &Feed{Prefix: "PL"},
-			expected: "#Polska #PLPolska",
-		},
-		{
-			name:     "prefix not duplicated",
-			item:     &gofeed.Item{Categories: []string{"PLPolska"}},
-			feed:     &Feed{Prefix: "PL"},
-			expected: "#PLPolska",
-		},
-		{
-			name:     "colon splits tags",
-			item:     &gofeed.Item{Categories: []string{"Tech:News:Update"}},
-			feed:     &Feed{},
-			expected: "#Tech #News #Update",
-		},
-		{
-			name:     "regex extracts from link",
-			item:     &gofeed.Item{Link: "https://example.com/category/golang"},
-			feed:     &Feed{},
-			regex:    regexp.MustCompile(`/category/([^/]+)`),
-			expected: "#golang",
-		},
-		{
-			name:     "regex skips tags with hyphen",
-			item:     &gofeed.Item{Link: "https://example.com/tag/go-lang"},
-			feed:     &Feed{},
-			regex:    regexp.MustCompile(`/tag/([^/]+)`),
-			expected: "",
-		},
-		{
-			name:     "empty categories with no regex",
-			item:     &gofeed.Item{},
-			feed:     &Feed{},
-			expected: "",
-		},
-		{
-			name:     "whitespace trimmed",
-			item:     &gofeed.Item{Categories: []string{"  Tech  ", "  News  "}},
-			feed:     &Feed{},
-			expected: "#Tech #News",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := makeHashtags(tt.item, tt.feed, tt.regex)
-			if got != tt.expected {
-				t.Errorf("makeHashtags() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
 }

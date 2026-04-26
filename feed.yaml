@@ -12,6 +12,7 @@ instance:
           replace_from:
           replace_to:
           hashlink:
+          hashtag:
           prefix:
 
         - name:

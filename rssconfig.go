@@ -54,6 +54,7 @@ type FeedsMonitor struct {
 // - Prefix: optional text to prepend to posts
 // - Visibility: post visibility level (public, unlisted, private)
 // - HashLink: whether to add hash link to posts
+// - HashTag: optional hashtag to append to posts
 // - ReplaceFrom/ReplaceTo: text replacement rules
 // - Interval: check interval in minutes
 // - LastRun: Unix timestamp of last check
@@ -70,6 +71,7 @@ type Feed struct {
 	Prefix      string                 `yaml:"prefix,omitempty"`
 	Visibility  string                 `yaml:"visibility,omitempty"`
 	HashLink    string                 `yaml:"hashlink,omitempty"`
+	HashTag     string                 `yaml:"hashtag,omitempty"`
 	ReplaceFrom string                 `yaml:"replace_from,omitempty"`
 	ReplaceTo   string                 `yaml:"replace_to,omitempty"`
 	Interval    int64                  `yaml:"interval,omitempty"`

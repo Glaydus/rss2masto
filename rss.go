@@ -367,10 +367,15 @@ var replacer = strings.NewReplacer(" - ", " ", " i ", ": ")
 
 // makeHashtags constructs hashtags from item categories or link matching
 // If categories exist, they are processed to create hashtags
+// If HashTag is set, it's added to the tags
 // If HashLink regex is provided, it's used to extract hashtags from the item link
 // Prefix is added to hashtags if specified
 func makeHashtags(item *gofeed.Item, f *Feed, re *regexp.Regexp) (hashtags string) {
 	var aTags []string
+
+	if f.HashTag != "" {
+		aTags = append(aTags, f.HashTag)
+	}
 
 	if item.Categories != nil {
 		for _, tag := range item.Categories {
