@@ -2,6 +2,7 @@ package rss2masto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -12,13 +13,17 @@ import (
 
 // CacheClient is a wrapper around the redis client and the cache library
 type CacheClient struct {
-	client *redis.Client
-	cache  *cache.Cache
-	ctx    context.Context
+	client  *redis.Client
+	cache   *cache.Cache
+	ctx     context.Context
+	offline bool
 }
 
 // Cache is the global cache client
-var Cache *CacheClient = newCache()
+var (
+	Cache      *CacheClient = newCache()
+	errOffline              = errors.New("redis is offline")
+)
 
 const (
 	storageDuration = 7 * 24 * time.Hour
@@ -27,7 +32,9 @@ const (
 
 func newCache() *CacheClient {
 	var opt *redis.Options
+	var cacheOpt *cache.Options
 	var err error
+	var offline bool
 
 	if debugMode {
 		opt = &redis.Options{
@@ -55,44 +62,59 @@ func newCache() *CacheClient {
 
 	client := redis.NewClient(opt)
 
+	cacheOpt = &cache.Options{
+		Redis:        client,
+		LocalCache:   cache.NewTinyLFU(5000, storageDuration*2),
+		StatsEnabled: true,
+	}
+
 	_, err = client.Ping(context.Background()).Result()
 	if err != nil {
-		panic(err)
+		offline = true
+		cacheOpt.Redis = nil
 	}
 
 	return &CacheClient{
-		client: client,
-		ctx:    context.Background(),
-		cache: cache.New(&cache.Options{
-			Redis:        client,
-			LocalCache:   cache.NewTinyLFU(5000, storageDuration*2),
-			StatsEnabled: true,
-		}),
+		client:  client,
+		ctx:     context.Background(),
+		cache:   cache.New(cacheOpt),
+		offline: offline,
 	}
 }
 
 // Close closes the redis connection
 func (c *CacheClient) Close() {
-	err := c.client.Close()
-	if err != nil {
-		fmt.Printf("Error closing Redis connection: %v", err)
-	} else {
-		fmt.Println("Redis connection Close()")
+	if !c.offline {
+		err := c.client.Close()
+		if err != nil {
+			fmt.Printf("Error closing Redis connection: %v", err)
+		} else {
+			fmt.Println("Redis connection Close()")
+		}
 	}
 }
 
 // Set sets a key-value pair in redis
 func (c *CacheClient) Set(key string, value any, expiration time.Duration) error {
+	if c.offline {
+		return errOffline
+	}
 	return c.client.Set(c.ctx, key, value, expiration).Err()
 }
 
 // Get gets a value from redis
 func (c *CacheClient) Get(key string) (string, error) {
+	if c.offline {
+		return "", errOffline
+	}
 	return c.client.Get(c.ctx, key).Result()
 }
 
 // GetKeys gets all keys matching a pattern
 func (c *CacheClient) GetKeys(keyPattern string, count ...int64) ([]string, error) {
+	if c.offline {
+		return nil, errOffline
+	}
 	limit := int64(-1)
 	if len(count) > 0 {
 		limit = count[0]
@@ -103,21 +125,33 @@ func (c *CacheClient) GetKeys(keyPattern string, count ...int64) ([]string, erro
 
 // GetEx gets a value from redis with an expiration
 func (c *CacheClient) GetEx(key string, expiration time.Duration) (string, error) {
+	if c.offline {
+		return "", errOffline
+	}
 	return c.client.GetEx(c.ctx, key, expiration).Result()
 }
 
 // GetBytes gets a value from redis as bytes
 func (c *CacheClient) GetBytes(key string) ([]byte, error) {
+	if c.offline {
+		return nil, errOffline
+	}
 	return c.client.Get(c.ctx, key).Bytes()
 }
 
 // MGet gets multiple values from redis
 func (c *CacheClient) MGet(keys []string) ([]any, error) {
+	if c.offline {
+		return nil, errOffline
+	}
 	return c.client.MGet(c.ctx, keys...).Result()
 }
 
 // Exists checks if a key exists in redis
 func (c *CacheClient) Exists(key string) bool {
+	if c.offline {
+		return false
+	}
 	return c.client.Exists(c.ctx, key).Val() > 0
 }
 
@@ -185,5 +219,8 @@ func (c *CacheClient) Stats() *cache.Stats {
 
 // PoolStats returns the redis connection pool statistics
 func (c *CacheClient) PoolStats() *redis.PoolStats {
+	if c.offline {
+		return nil
+	}
 	return c.client.PoolStats()
 }
