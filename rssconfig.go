@@ -53,11 +53,12 @@ type FeedsMonitor struct {
 // - Token: Mastodon API access token
 // - Prefix: optional text to prepend to posts
 // - Visibility: post visibility level (public, unlisted, private)
-// - HashLink: whether to add hash link to posts
-// - HashTag: optional hashtag to append to posts
-// - ReplaceFrom/ReplaceTo: text replacement rules
-// - Interval: check interval in minutes
-// - LastRun: Unix timestamp of last check
+// - HashLink: regex to extract a hashtag from the item link
+// - HashTag: static hashtag always added to every post from this feed
+// - ReplaceFrom/ReplaceTo: regex-based text replacement applied to post description
+// - ReplaceLink: regex applied to item link — all matches are removed from the URL before posting
+// - Interval: check interval in scheduler ticks
+// - LastRun: Unix timestamp of last processed item
 // - Count: number of items posted
 // - Id: Mastodon account ID
 // - SendTime: time when last post was sent
@@ -74,6 +75,7 @@ type Feed struct {
 	HashTag     string                 `yaml:"hashtag,omitempty"`
 	ReplaceFrom string                 `yaml:"replace_from,omitempty"`
 	ReplaceTo   string                 `yaml:"replace_to,omitempty"`
+	ReplaceLink string                 `yaml:"replace_link,omitempty"`
 	Interval    int64                  `yaml:"interval,omitempty"`
 	LastRun     int64                  `yaml:"last_run,omitempty"`
 	Count       int64                  `yaml:"-"`
@@ -342,6 +344,9 @@ func (fm *FeedsMonitor) setDefaults() {
 		}
 		// Sanitize feed.Name
 		feed.Name = feedNameReplacer.Replace(feed.Name)
+		if len(feed.Name) == 1 {
+			feed.Name += "_"
+		}
 
 		// Set empty etag
 		empty := make([]byte, 0)
@@ -361,8 +366,11 @@ func (fm *FeedsMonitor) getInstanceLimit() (limit int) {
 
 	b, err := fm.GetFromInstance("/api/v1/instance")
 	if err != nil {
-		fmt.Println("Error getting instance data from", fm.Instance.URL, ":", err)
-		return
+		b, err = fm.GetFromInstance("/api/v2/instance")
+		if err != nil {
+			fmt.Println("Error getting instance data from", fm.Instance.URL, ":", err)
+			return
+		}
 	}
 	i := jsoniter.Get(b, "configuration", "statuses", "max_characters").ToInt()
 	if i > 0 {

@@ -92,7 +92,7 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 		})
 	}
 
-	var reReplace, reTag *regexp.Regexp
+	var reReplace, reTag, reLink *regexp.Regexp
 
 	if f.ReplaceFrom != "" {
 		reReplace, _ = regexp.Compile(f.ReplaceFrom)
@@ -100,9 +100,14 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 	if f.HashLink != "" {
 		reTag, _ = regexp.Compile(f.HashLink)
 	}
+	if f.ReplaceLink != "" {
+		reLink, _ = regexp.Compile(f.ReplaceLink)
+	}
 
 	now := time.Now().UTC()
 	limitUnixTime := now.Add(earlierDuration).Unix()
+
+	postError := false
 
 	for i := len(feed.Items) - 1; i >= 0; i-- {
 		item := feed.Items[i]
@@ -127,6 +132,23 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 			continue
 		}
 
+		lang := feed.Language
+		if strings.Contains(item.Link, "4-po-ukra") {
+			lang = "uk"
+		}
+		if len(lang) != 2 {
+			if len(lang) > 2 {
+				lang = lang[:2]
+			} else {
+				lang = fm.Instance.Lang
+			}
+		}
+
+		item.Link, _, _ = strings.Cut(item.Link, "?source=rss")
+		if reLink != nil {
+			item.Link = reLink.ReplaceAllString(item.Link, "")
+		}
+
 		hashtags := makeHashtags(item, f, reTag)
 		title, description := fm.sanitizeMessage(item, len(hashtags))
 
@@ -149,16 +171,6 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 		}
 		sb.WriteString(item.Link)
 		msg := sb.String()
-
-		lang := feed.Language
-
-		if len(lang) != 2 {
-			if len(lang) > 2 {
-				lang = lang[:2]
-			} else {
-				lang = fm.Instance.Lang
-			}
-		}
 
 		if !debugMode {
 			func() {
@@ -189,6 +201,7 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 				err = fm.PostToInstance(req)
 				if err != nil {
 					fmt.Printf("[%s] Mastodon post error: %v\n", f.Name, err)
+					postError = true
 					return
 				}
 
@@ -211,9 +224,15 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 			//os.WriteFile(idempotencyKey, []byte(msg), 0600)
 		}
 	}
+	if postError {
+		// reset etag
+		empty := make([]byte, 0)
+		f.etag.Store(&empty)
+	}
 }
 
 // GetFromInstance performs a GET request to the specified endpoint on the Mastodon instance.
+// Optional parameter token can be provided for authentication
 func (fm *FeedsMonitor) GetFromInstance(endpoint string, token ...string) ([]byte, error) {
 	target := fm.Instance.URL + endpoint
 
@@ -397,7 +416,11 @@ func makeHashtags(item *gofeed.Item, f *Feed, re *regexp.Regexp) (hashtags strin
 			res := re.FindAllStringSubmatch(item.Link, 1)
 			if (len(res) != 0) && (len(res[0]) == 2) {
 				tag := res[0][1]
+				tag = hashDict(tag)
 				if !strings.Contains(tag, "-") {
+					if f.Prefix == "" || !strings.HasPrefix(tag, f.Prefix) {
+						tag = casesTitle.String(tag)
+					}
 					aTags = append(aTags, tag)
 				}
 			}

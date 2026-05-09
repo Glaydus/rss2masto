@@ -91,6 +91,7 @@ instance:
       hashlink:                        # regex with one capture group — extracts hashtag from item URL
       replace_from:                    # regex applied to post description
       replace_to:                      # replacement string (used with replace_from)
+      replace_link:                    # regex applied to item link — all matches are removed from the URL
 
     - name: Another Feed
       url: https://another.example/feed.xml
@@ -118,6 +119,7 @@ instance:
 | `feed.hashlink` | no | — | Regex to extract a hashtag from the item link |
 | `feed.replace_from` | no | — | Regex pattern applied to post description |
 | `feed.replace_to` | no | — | Replacement string for `replace_from` matches |
+| `feed.replace_link` | no | — | Regex applied to item link — all matches are removed from the URL before posting |
 
 ## Redis
 
@@ -138,9 +140,39 @@ The value is passed directly to `redis.ParseURL`, so full Redis URLs are also ac
 export REDIS_HOST=redis://:password@localhost:6379/0
 ```
 
-## Scheduler
+## Hash dictionary
 
-`Start()` is designed to be called repeatedly on a fixed ticker. Each feed has an `interval` field that acts as a divisor — a feed with `interval: 10` is only processed on every 10th call to `Start()`. This lets you run a single tight ticker (e.g. every minute) while checking different feeds at different frequencies without managing multiple goroutines externally.
+When hashtags are extracted from item links via `hashlink`, the raw URL segment is looked up in an optional dictionary before being used as a hashtag. This lets you map slugs that would otherwise be unusable (contain hyphens, lack diacritics, etc.) to proper hashtag forms.
+
+The dictionary is loaded from `./hashdict.txt` at startup. The path can be changed by setting `rss2masto.HashDictFile` before calling `NewFeedsMonitor`. The dictionary can also be reloaded at runtime without restarting by calling `rss2masto.ReloadHashDict(data)`.
+
+### File format
+
+```
+# lines starting with # are comments
+krakow=Kraków
+hokej-na-lodzie=HokejNaLodzie
+zuzel=Żużel
+```
+
+Each line is `key=value`. The key is the raw string extracted from the URL; the value is the hashtag that will be used instead. If a key is not found in the dictionary, the original string is used (with title-casing applied).
+
+### Runtime reload
+
+```go
+data, err := os.ReadFile("hashdict.txt")
+if err == nil {
+    rss2masto.ReloadHashDict(data)
+}
+```
+
+Passing `nil` re-reads the file at `HashDictFile`:
+
+```go
+rss2masto.ReloadHashDict(nil)
+```
+
+## Scheduler on a fixed ticker. Each feed has an `interval` field that acts as a divisor — a feed with `interval: 10` is only processed on every 10th call to `Start()`. This lets you run a single tight ticker (e.g. every minute) while checking different feeds at different frequencies without managing multiple goroutines externally.
 
 ```
 ticker: 1 minute
