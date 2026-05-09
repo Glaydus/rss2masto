@@ -206,7 +206,7 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	casesTitle = cases.Title(langTag, cases.NoLower)
 
 	// Set default values for feeds and get their IDs
-	go fm.setDefaults()
+	fm.setDefaults()
 
 	return &fm, nil
 }
