@@ -1,0 +1,3 @@
+swiat=Świat
+hokej-na-lodzie=HokejNaLodzie
+zuzel=Żużel
