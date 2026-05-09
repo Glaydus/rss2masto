@@ -172,8 +172,9 @@ Passing `nil` re-reads the file at `HashDictFile`:
 rss2masto.ReloadHashDict(nil)
 ```
 
-## Scheduler on a fixed ticker
+## Scheduler
 
+`Start()` is designed to be called repeatedly on a fixed ticker.
 Each feed has an `interval` field that acts as a divisor — a feed with `interval: 10` is only processed on every 10th call to `Start()`. This lets you run a single tight ticker (e.g. every minute) while checking different feeds at different frequencies without managing multiple goroutines externally.
 
 ```
