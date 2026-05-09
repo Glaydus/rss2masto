@@ -25,7 +25,8 @@ A Go library for publishing RSS/Atom feed items as Mastodon posts. Designed to h
 ## Requirements
 
 - Go 1.25+
-- Redis (used for deduplication and caching)
+- Redis (used for deduplication and caching) — optional.<br />
+If Redis is unavailable, an in-process TinyLFU cache is used as a fallback. Deduplication will not persist across restarts in that case.
 
 ## Installation
 
@@ -127,6 +128,8 @@ Redis is used for two purposes:
 
 1. **Deduplication** — an idempotency key (`<feed_prefix>:<item_hash>`) is stored after each successful post. Items already in Redis are skipped on subsequent runs.
 2. **Caching** — a local TinyLFU cache (backed by go-redis/cache) reduces Redis round-trips for hot keys.
+
+The same idempotency key is also sent to the Mastodon API as the `Idempotency-Key` request header on every post. This provides a second layer of duplicate protection — if the same request is submitted more than once within 1 hour (e.g. due to a retry), the Mastodon instance will return the original status instead of creating a duplicate.
 
 The Redis connection is configured via the `REDIS_HOST` environment variable:
 
