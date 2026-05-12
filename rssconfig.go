@@ -61,6 +61,7 @@ type FeedsMonitor struct {
 // - LastRun: Unix timestamp of last processed item
 // - Count: number of items posted
 // - Id: Mastodon account ID
+// - Language: default language for posts from Mastodon profile
 // - SendTime: time when last post was sent
 // - Followers: concurrent follower count
 // - shedCounter: scheduled counter for posting
@@ -80,6 +81,7 @@ type Feed struct {
 	LastRun     int64                  `yaml:"last_run,omitempty"`
 	Count       int64                  `yaml:"-"`
 	Id          int64                  `yaml:"-"`
+	Language    string                 `yaml:"-"`
 	SendTime    time.Time              `yaml:"-"`
 	Followers   atomic.Int64           `yaml:"-"`
 	shedCounter atomic.Int64           `yaml:"-"`
@@ -373,6 +375,10 @@ func (fm *FeedsMonitor) getInstanceLimit() (limit int) {
 		}
 	}
 	i := jsoniter.Get(b, "configuration", "statuses", "max_characters").ToInt()
+	if i == 0 {
+		// Akkoma/Pleroma compatibility
+		i = jsoniter.Get(b, "max_toot_chars").ToInt()
+	}
 	if i > 0 {
 		limit = i
 	}
@@ -395,6 +401,7 @@ func (fm *FeedsMonitor) updateFeedData(feed *Feed) error {
 		return fmt.Errorf("[%s] Invalid token", feed.Name)
 	}
 	feed.Id = id
+	feed.Language = jsoniter.Get(b, "source", "language").ToString()
 	feed.Followers.Store(jsoniter.Get(b, "followers_count").ToInt64())
 
 	return nil

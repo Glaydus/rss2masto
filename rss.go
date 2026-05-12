@@ -132,14 +132,18 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 			continue
 		}
 
-		lang := feed.Language
-		if strings.Contains(item.Link, "4-po-ukra") {
-			lang = "uk"
-		}
+		// Determine language for the post
+		// Language is determined in the following order:
+		// 1. Feed (mastodon profile) language
+		// 2. RSS feed language
+		// 3. Default language from FeedsMonitor configuration
+		lang := f.Language
 		if len(lang) != 2 {
+			lang = feed.Language
 			if len(lang) > 2 {
 				lang = lang[:2]
-			} else {
+			}
+			if len(lang) != 2 {
 				lang = fm.Instance.Lang
 			}
 		}

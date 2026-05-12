@@ -36,7 +36,7 @@ func TestHashString(t *testing.T) {
 func TestMakeHashtags(t *testing.T) {
 	casesTitle = cases.Title(language.English, cases.NoLower)
 	// Load dictionary used by hashDict inside makeHashtags
-	ReloadHashDict([]byte("krakow=Kraków\nhokej-na-lodzie=HokejNaLodzie\n"))
+	ReloadHashDict([]byte("krakow=Kraków\nhokej-na-lodzie=HokejNaLodzie\ntelewizja-i-vod=Telewizja #Vod\n"))
 
 	tests := []struct {
 		name     string
@@ -59,10 +59,10 @@ func TestMakeHashtags(t *testing.T) {
 		},
 		{
 			name:     "no categories, with regex match",
-			item:     &gofeed.Item{Link: "https://example.com/posts/golang"},
+			item:     &gofeed.Item{Link: "https://www.telepolis.pl/fintech/cashless/przerwa-paribas"},
 			feed:     &Feed{},
-			regex:    regexp.MustCompile(`/posts/([^/]+)`),
-			expected: "#Golang",
+			regex:    regexp.MustCompile(`telepolis\.pl\/(?:artykuly|rozrywka|.*?tech)\/(.+?)\/`),
+			expected: "#Cashless",
 		},
 		{
 			name:     "no categories, with regex match and prefix",
@@ -108,6 +108,13 @@ func TestMakeHashtags(t *testing.T) {
 			feed:     &Feed{},
 			regex:    regexp.MustCompile(`/sport/([^/]+)/`),
 			expected: "#HokejNaLodzie", // dict maps hyphenated slug to valid hashtag
+		},
+		{
+			name:     "hashlink with dict translation — 2 hashes",
+			item:     &gofeed.Item{Link: "https://www.telepolis.pl/rozrywka/telewizja-i-vod/nowy-kryminal"},
+			feed:     &Feed{},
+			regex:    regexp.MustCompile(`telepolis\.pl\/(?:artykuly|rozrywka|.*?tech)\/(.+?)\/`),
+			expected: "#Telewizja #Vod",
 		},
 	}
 
