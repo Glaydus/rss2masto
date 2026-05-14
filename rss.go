@@ -82,7 +82,8 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 	}
 
 	// Sort by date descending
-	if feed.FeedType == "atom" {
+	if len(feed.Items) > 0 && feed.Items[0].UpdatedParsed != nil {
+		// Sort by UpdatedParsed if available, otherwise fall back to PublishedParsed
 		sort.Slice(feed.Items, func(i, j int) bool {
 			return feed.Items[i].UpdatedParsed.Unix() > feed.Items[j].UpdatedParsed.Unix()
 		})
@@ -112,7 +113,7 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 	for i := len(feed.Items) - 1; i >= 0; i-- {
 		item := feed.Items[i]
 		pubUnixTime := item.PublishedParsed.Unix()
-		if feed.FeedType == "atom" {
+		if item.UpdatedParsed != nil {
 			pubUnixTime = item.UpdatedParsed.Unix()
 		}
 
