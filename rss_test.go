@@ -409,4 +409,51 @@ func TestFetchAndParse(t *testing.T) {
 			t.Error("expected nil for invalid XML")
 		}
 	})
+
+	t.Run("fallback URL used when primary fails", func(t *testing.T) {
+		primaryURL := "https://primary.example.com/feed.xml"
+		fallbackURL := "https://fallback.example.com/feed.xml"
+
+		var calledURLs []string
+		p := &Parser{
+			Client: &mockHostClient{
+				handler: func(req *fasthttp.Request, resp *fasthttp.Response) error {
+					url := string(req.RequestURI())
+					calledURLs = append(calledURLs, url)
+					if url == primaryURL {
+						return fmt.Errorf("connection refused")
+					}
+					// fallback responds with a valid feed
+					resp.SetStatusCode(fasthttp.StatusOK)
+					resp.SetBodyString(validRSS)
+					return nil
+				},
+			},
+			parserPool: sync.Pool{New: func() any { return gofeed.NewParser() }},
+		}
+
+		feed := &Feed{
+			Name: "te",
+			URLs: FeedURLs{primaryURL, fallbackURL},
+		}
+		feed.EmptyEtag()
+
+		result := p.FetchAndParse(feed)
+
+		if result == nil {
+			t.Fatal("expected parsed feed from fallback URL, got nil")
+		}
+		if result.Title != "Test Feed" {
+			t.Errorf("Title = %q, want %q", result.Title, "Test Feed")
+		}
+		if len(calledURLs) != 2 {
+			t.Errorf("expected 2 HTTP calls (primary + fallback), got %d: %v", len(calledURLs), calledURLs)
+		}
+		if calledURLs[0] != primaryURL {
+			t.Errorf("first call should be to primary URL, got %q", calledURLs[0])
+		}
+		if calledURLs[1] != fallbackURL {
+			t.Errorf("second call should be to fallback URL, got %q", calledURLs[1])
+		}
+	})
 }
