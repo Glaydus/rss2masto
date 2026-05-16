@@ -83,7 +83,7 @@ instance:
 
   feed:
     - name: My Tech Blog               # display name (used as log prefix and idempotency key prefix)
-      url: https://example.com/rss     # RSS or Atom feed URL
+      url: https://example.com/rss     # RSS or Atom feed URL (single URL or a list of fallback URLs)
       token: <MASTODON_API_TOKEN>      # Mastodon access token for this account
       interval: 10                     # check every N scheduler ticks (e.g. 10 = every 10 minutes if ticker is 1 min)
       visibility: public               # public | unlisted | private
@@ -99,6 +99,14 @@ instance:
       token: <ANOTHER_TOKEN>
       interval: 30
       visibility: unlisted
+
+    - name: Feed With Fallbacks
+      url:                             # list of URLs — first is primary, rest are fallbacks tried in order
+        - https://primary.example/feed.xml
+        - https://mirror.example/feed.xml
+      token: <YET_ANOTHER_TOKEN>
+      interval: 60
+      visibility: public
 ```
 
 ### Field reference
@@ -111,7 +119,7 @@ instance:
 | `instance.limit` | no | auto | Max post characters; fetched from instance API if not set |
 | `instance.save` | no | `false` | Write updated `last_run` values back to `feed.yaml` |
 | `feed.name` | no | derived from URL host | Feed identifier used in logs and idempotency keys |
-| `feed.url` | yes | — | RSS/Atom feed endpoint |
+| `feed.url` | yes | — | RSS/Atom feed endpoint — single URL string or a YAML list of URLs; the first is primary, the rest are fallbacks tried in order |
 | `feed.token` | yes | — | Mastodon API access token |
 | `feed.interval` | no | `10` | Scheduler ticks between checks |
 | `feed.visibility` | no | `private` | Mastodon post visibility |
