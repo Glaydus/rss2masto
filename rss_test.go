@@ -266,7 +266,7 @@ func TestStart_EmptyFeeds(t *testing.T) {
 func TestStart_FeedsWithoutURLOrToken(t *testing.T) {
 	fm := &FeedsMonitor{}
 	fm.Instance.Feeds = []*Feed{
-		{Name: "Test", URL: "", Token: ""},
+		{Name: "Test", URLs: FeedURLs{""}, Token: ""},
 	}
 	fm.Start() // Should complete without error
 }
@@ -331,8 +331,7 @@ func TestFetchAndParse(t *testing.T) {
 			return nil
 		})
 		feed := NewTestFeed("te", "https://example.com/feed.xml")
-		etag := []byte(`"abc123"`)
-		feed.etag.Store(&etag)
+		feed.SetETag([]byte(`"abc123"`))
 
 		result := p.FetchAndParse(feed)
 
@@ -365,11 +364,11 @@ func TestFetchAndParse(t *testing.T) {
 		})
 		feed := NewTestFeed("te", "https://example.com/feed.xml")
 		original := []byte(`"abc123"`)
-		feed.etag.Store(&original)
+		feed.SetETag(original)
 
 		p.FetchAndParse(feed)
 
-		// pointer should be the same original slice (not replaced)
+		// slice header should point to the same backing array (not replaced)
 		if &feed.ETag()[0] != &original[0] {
 			t.Error("etag pointer changed despite same value")
 		}

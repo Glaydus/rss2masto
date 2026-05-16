@@ -43,7 +43,7 @@ func (fm *FeedsMonitor) Start() {
 
 	var wg sync.WaitGroup
 	for _, feed := range fm.Instance.Feeds {
-		if feed.URL == "" || feed.Token == "" {
+		if feed.URL() == "" || feed.Token == "" {
 			continue
 		}
 		if feed.shedCounter.Add(1) >= feed.Interval {
@@ -81,9 +81,9 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 		return
 	}
 
-	// Sort by date descending
+	// Sort items by date descending
+	// Sort by UpdatedParsed if available, otherwise fall back to PublishedParsed
 	if len(feed.Items) > 0 && feed.Items[0].UpdatedParsed != nil {
-		// Sort by UpdatedParsed if available, otherwise fall back to PublishedParsed
 		sort.Slice(feed.Items, func(i, j int) bool {
 			return feed.Items[i].UpdatedParsed.Unix() > feed.Items[j].UpdatedParsed.Unix()
 		})
@@ -117,12 +117,17 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 			pubUnixTime = item.UpdatedParsed.Unix()
 		}
 
+		// ignore items older than 12 hours
 		if pubUnixTime < limitUnixTime {
 			continue
 		}
+
+		// fix case where time is in the future
 		if pubUnixTime > now.Unix() {
 			pubUnixTime = now.Unix()
 		}
+
+		// ignore items older than last run (we presume that it has already been sent)
 		if pubUnixTime < f.LastRun {
 			continue
 		}
@@ -230,9 +235,8 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 		}
 	}
 	if postError {
-		// reset etag
-		empty := make([]byte, 0)
-		f.etag.Store(&empty)
+		// reset etag so next run re-fetches unconditionally
+		f.EmptyEtag()
 	}
 }
 
@@ -308,25 +312,37 @@ func (fm *FeedsMonitor) PostToInstance(req *fasthttp.Request) error {
 	return nil
 }
 
-// FetchAndParse fetches and parses a feed from the given URL.
-// It returns a parsed feed or nil if an error occurs.
+// FetchAndParse fetches and parses a feed, trying each URL in order.
+// The first URL is the primary; subsequent URLs are used as fallbacks.
+// Returns a parsed feed or nil if all URLs fail.
 func (p *Parser) FetchAndParse(f *Feed) *gofeed.Feed {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	req.SetRequestURI(f.URL)
 	req.Header.SetMethod(fasthttp.MethodGet)
 	req.Header.Set("User-Agent", DefaultUserAgent)
 	req.Header.Set("Accept", "application/xml, text/xml, */*")
 
-	currentEtag := *f.etag.Load()
+	currentEtag := f.ETag()
 	if len(currentEtag) > 0 {
 		req.Header.SetBytesV("If-None-Match", currentEtag)
 	}
 
-	if err := p.Client.Do(req, resp); err != nil {
+	var err error
+	func() {
+		for _, url := range f.URLs {
+			req.SetRequestURI(url)
+			err = p.Client.Do(req, resp)
+			if err == nil {
+				return
+			}
+			resp.Reset()
+		}
+	}()
+
+	if err != nil {
 		fmt.Printf("[%s] Error fetching: %v\n", f.Name, err)
 		return nil
 	}
@@ -338,8 +354,7 @@ func (p *Parser) FetchAndParse(f *Feed) *gofeed.Feed {
 	if resp.StatusCode() == fasthttp.StatusOK {
 		newEtag := resp.Header.Peek("ETag")
 		if len(newEtag) > 0 && !bytes.Equal(currentEtag, newEtag) {
-			etagCopy := append([]byte(nil), newEtag...)
-			f.etag.Store(&etagCopy)
+			f.SetETag(append([]byte(nil), newEtag...))
 		}
 
 		fp := p.parserPool.Get().(*gofeed.Parser)

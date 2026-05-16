@@ -46,10 +46,42 @@ type FeedsMonitor struct {
 	location   *time.Location
 }
 
+// FeedURLs holds one or more RSS feed URLs with YAML unmarshaling support for both
+// a single string ("url: https://...") and a list ("url:\n  - https://...").
+// The first URL is the primary; subsequent URLs are used as fallbacks in order.
+type FeedURLs []string
+
+// UnmarshalYAML implements yaml.Unmarshaler so that both scalar and sequence
+// YAML values are accepted for the "url" field.
+func (u *FeedURLs) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		*u = FeedURLs{value.Value}
+	case yaml.SequenceNode:
+		var urls []string
+		if err := value.Decode(&urls); err != nil {
+			return err
+		}
+		*u = FeedURLs(urls)
+	default:
+		return fmt.Errorf("url must be a string or a list of strings")
+	}
+	return nil
+}
+
+// MarshalYAML implements yaml.Marshaler so that a single-element FeedURLs is
+// serialised back as a plain scalar (preserving the original YAML format).
+func (u FeedURLs) MarshalYAML() (any, error) {
+	if len(u) == 1 {
+		return u[0], nil
+	}
+	return []string(u), nil
+}
+
 // Feed holds the configuration and state for a single RSS feed
 // The struct includes fields for:
 // - Name: feed identifier/name
-// - URL: RSS feed endpoint
+// - URLs: RSS feed endpoint(s); the first is primary, the rest are fallbacks
 // - Token: Mastodon API access token
 // - Prefix: optional text to prepend to posts
 // - Visibility: post visibility level (public, unlisted, private)
@@ -68,7 +100,7 @@ type FeedsMonitor struct {
 // - etag: HTTP ETag for conditional requests
 type Feed struct {
 	Name        string                 `yaml:"name"`
-	URL         string                 `yaml:"url"`
+	URLs        FeedURLs               `yaml:"url"`
 	Token       string                 `yaml:"token"`
 	Prefix      string                 `yaml:"prefix,omitempty"`
 	Visibility  string                 `yaml:"visibility,omitempty"`
@@ -218,17 +250,34 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 func NewTestFeed(name, url string) *Feed {
 	feed := &Feed{
 		Name: name,
-		URL:  url,
+		URLs: FeedURLs{url},
 	}
-	empty := make([]byte, 0)
-	feed.etag.Store(&empty)
+	feed.EmptyEtag()
 	return feed
 }
 
-// ETag returns the ETag for the feed
-// It returns a copy of the ETag byte slice to prevent external modification
+// URL returns the primary (first) feed URL for convenience.
+func (f *Feed) URL() string {
+	if len(f.URLs) == 0 {
+		return ""
+	}
+	return f.URLs[0]
+}
+
+// EmptyEtag initialises the etag to an empty slice.
+// Must be called after URLs are set.
+func (f *Feed) EmptyEtag() {
+	f.SetETag(make([]byte, 0))
+}
+
+// ETag returns the current ETag for the feed.
 func (f *Feed) ETag() []byte {
 	return *f.etag.Load()
+}
+
+// SetETag stores a new ETag for the feed.
+func (f *Feed) SetETag(etag []byte) {
+	f.etag.Store(&etag)
 }
 
 // LastCheck returns the Unix timestamp of the last check
@@ -339,7 +388,7 @@ func (fm *FeedsMonitor) setDefaults() {
 			url := fasthttp.AcquireURI()
 			defer fasthttp.ReleaseURI(url)
 
-			err := url.Parse(nil, s2b(feed.URL))
+			err := url.Parse(nil, s2b(feed.URL()))
 			if err == nil {
 				feed.Name = string(url.Host())
 			}
@@ -350,9 +399,8 @@ func (fm *FeedsMonitor) setDefaults() {
 			feed.Name += "_"
 		}
 
-		// Set empty etag
-		empty := make([]byte, 0)
-		feed.etag.Store(&empty)
+		// Initialise empty etag for the feed
+		feed.EmptyEtag()
 
 		// Update feed data including ID and followers count
 		if err := fm.updateFeedData(feed); err != nil {
