@@ -22,7 +22,7 @@ type FeedsMonitor struct {
 	// Instance holds the Mastodon instance configuration and list of feeds to monitor
 	// The struct includes fields for:
 	// - URL: Mastodon instance URL
-	// - Lang: default language for posts
+	// - Lang: fallback language for posts
 	// - Limit: maximum characters per post
 	// - TimeZone: timezone for date formatting
 	// - Save: whether to save state to disk
@@ -78,44 +78,25 @@ func (u FeedURLs) MarshalYAML() (any, error) {
 	return []string(u), nil
 }
 
-// Feed holds the configuration and state for a single RSS feed
-// The struct includes fields for:
-// - Name: feed identifier/name
-// - URLs: RSS feed endpoint(s); the first is primary, the rest are fallbacks
-// - Token: Mastodon API access token
-// - Prefix: optional text to prepend to posts
-// - Visibility: post visibility level (public, unlisted, private)
-// - HashLink: regex to extract a hashtag from the item link
-// - HashTag: static hashtag always added to every post from this feed
-// - ReplaceFrom/ReplaceTo: regex-based text replacement applied to post description
-// - ReplaceLink: regex applied to item link — all matches are removed from the URL before posting
-// - Interval: check interval in scheduler ticks
-// - LastRun: Unix timestamp of last processed item
-// - Count: number of items posted
-// - Id: Mastodon account ID
-// - Language: default language for posts from Mastodon profile
-// - SendTime: time when last post was sent
-// - Followers: concurrent follower count
-// - shedCounter: scheduled counter for posting
-// - etag: HTTP ETag for conditional requests
+// Feed holds the configuration and runtime state for a single RSS/Atom feed.
 type Feed struct {
-	Name        string                 `yaml:"name"`
-	URLs        FeedURLs               `yaml:"url"`
-	Token       string                 `yaml:"token"`
-	Prefix      string                 `yaml:"prefix,omitempty"`
-	Visibility  string                 `yaml:"visibility,omitempty"`
-	HashLink    string                 `yaml:"hashlink,omitempty"`
-	HashTag     string                 `yaml:"hashtag,omitempty"`
-	ReplaceFrom string                 `yaml:"replace_from,omitempty"`
-	ReplaceTo   string                 `yaml:"replace_to,omitempty"`
-	ReplaceLink string                 `yaml:"replace_link,omitempty"`
-	Interval    int64                  `yaml:"interval,omitempty"`
-	LastRun     int64                  `yaml:"last_run,omitempty"`
-	Count       int64                  `yaml:"-"`
-	Id          int64                  `yaml:"-"`
-	Language    string                 `yaml:"-"`
-	SendTime    time.Time              `yaml:"-"`
-	Followers   atomic.Int64           `yaml:"-"`
+	Name        string                 `yaml:"name"`                   // feed identifier used in logs and idempotency keys
+	URLs        FeedURLs               `yaml:"url"`                    // RSS feed endpoint(s); first is primary, rest are fallbacks
+	Token       string                 `yaml:"token"`                  // Mastodon API access token
+	Prefix      string                 `yaml:"prefix,omitempty"`       // optional hashtag prefix added to every generated tag
+	Visibility  string                 `yaml:"visibility,omitempty"`   // post visibility: public, unlisted, or private
+	HashLink    string                 `yaml:"hashlink,omitempty"`     // regex with one capture group to extract a hashtag from the item link
+	HashTag     string                 `yaml:"hashtag,omitempty"`      // static hashtag always added to every post
+	ReplaceFrom string                 `yaml:"replace_from,omitempty"` // regex pattern applied to post description
+	ReplaceTo   string                 `yaml:"replace_to,omitempty"`   // replacement string for ReplaceFrom matches
+	ReplaceLink string                 `yaml:"replace_link,omitempty"` // regex applied to item link — all matches are removed before posting
+	Interval    int64                  `yaml:"interval,omitempty"`     // scheduler ticks between checks
+	LastRun     int64                  `yaml:"last_run,omitempty"`     // Unix timestamp of the last processed item
+	Count       int64                  `yaml:"-"`                      // number of items posted in the current run
+	Id          int64                  `yaml:"-"`                      // Mastodon account ID
+	Language    string                 `yaml:"-"`                      // language code from the Mastodon profile
+	SendTime    time.Time              `yaml:"-"`                      // time the last post was sent
+	Followers   atomic.Int64           `yaml:"-"`                      // follower count, updated concurrently
 	shedCounter atomic.Int64           `yaml:"-"`
 	etag        atomic.Pointer[[]byte] `yaml:"-"`
 }
@@ -221,9 +202,9 @@ func NewFeedsMonitor() (*FeedsMonitor, error) {
 	}
 	fm.Parser = NewParser(nil)
 
-	// Set LastMonit to 6 hours ago if not set or older than 6 hours
-	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 6 {
-		t := time.Now().UTC().Truncate(time.Minute).Add(-6 * time.Hour)
+	// Set LastMonit to 12 hours ago if not set or older than 12 hours
+	if fm.Instance.Monit == 0 || time.Now().UTC().Sub(time.Unix(fm.Instance.Monit, 0)).Hours() > 12 {
+		t := time.Now().UTC().Truncate(time.Minute).Add(-12 * time.Hour)
 		fm.Instance.Monit = t.Unix()
 	}
 	fm.lastMonit.Store(fm.Instance.Monit)

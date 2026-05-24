@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/cache/v9"
@@ -13,10 +14,14 @@ import (
 
 // CacheClient is a wrapper around the redis client and the cache library
 type CacheClient struct {
-	client  *redis.Client
-	cache   *cache.Cache
-	ctx     context.Context
-	offline bool
+	client     *redis.Client
+	cache      *cache.Cache
+	localCache cache.LocalCache
+	ctx        context.Context
+	offline    bool
+
+	hits   atomic.Uint64
+	misses atomic.Uint64
 }
 
 // Cache is the global cache client
@@ -63,9 +68,8 @@ func newCache() *CacheClient {
 	client := redis.NewClient(opt)
 
 	cacheOpt = &cache.Options{
-		Redis:        client,
-		LocalCache:   cache.NewTinyLFU(5000, storageDuration*2),
-		StatsEnabled: true,
+		Redis:      client,
+		LocalCache: cache.NewTinyLFU(5000, storageDuration*2),
 	}
 
 	_, err = client.Ping(context.Background()).Result()
@@ -75,10 +79,11 @@ func newCache() *CacheClient {
 	}
 
 	return &CacheClient{
-		client:  client,
-		ctx:     context.Background(),
-		cache:   cache.New(cacheOpt),
-		offline: offline,
+		client:     client,
+		ctx:        context.Background(),
+		cache:      cache.New(cacheOpt),
+		localCache: cacheOpt.LocalCache,
+		offline:    offline,
 	}
 }
 
@@ -202,9 +207,20 @@ func (c *CacheClient) Save(key string, value any) error {
 	})
 }
 
-// ValueExists checks if a value exists in the cache for the given key
-func (c *CacheClient) ValueExists(key string) bool {
-	return c.cache.Exists(c.ctx, key)
+// KeyExists checks if a key exists in the cache (local or remote)
+func (c *CacheClient) KeyExists(key string) bool {
+	_, ok := c.localCache.Get(key)
+	if ok {
+		return true
+	}
+
+	if c.Exists(key) {
+		c.localCache.Set(key, []byte{0x1F})
+		c.hits.Add(1)
+		return true
+	}
+	c.misses.Add(1)
+	return false
 }
 
 // Delete deletes a value from the cache for the given key
@@ -214,7 +230,10 @@ func (c *CacheClient) Delete(key string) error {
 
 // Stats returns the cache statistics
 func (c *CacheClient) Stats() *cache.Stats {
-	return c.cache.Stats()
+	return &cache.Stats{
+		Hits:   c.hits.Load(),
+		Misses: c.misses.Load(),
+	}
 }
 
 // PoolStats returns the redis connection pool statistics

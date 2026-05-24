@@ -134,7 +134,7 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 
 		idempotencyKey := f.Name[:2] + ":" + hashString(item.GUID)
 
-		if Cache.ValueExists(idempotencyKey) {
+		if Cache.KeyExists(idempotencyKey) {
 			continue
 		}
 
@@ -142,7 +142,7 @@ func (fm *FeedsMonitor) GetFeed(f *Feed) {
 		// Language is determined in the following order:
 		// 1. Feed (mastodon profile) language
 		// 2. RSS feed language
-		// 3. Default language from FeedsMonitor configuration
+		// 3. Language from FeedsMonitor configuration
 		lang := f.Language
 		if len(lang) != 2 {
 			lang = feed.Language
