@@ -8,7 +8,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mitchellh/go-ps v1.0.0
 	github.com/mmcdole/gofeed v1.3.0
-	github.com/redis/go-redis/v9 v9.19.0
+	github.com/redis/go-redis/v9 v9.20.0
 	github.com/valyala/fasthttp v1.71.0
 	github.com/zeebo/xxh3 v1.1.0
 	golang.org/x/text v0.37.0

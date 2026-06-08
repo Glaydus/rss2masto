@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"sync/atomic"
 	"time"
@@ -57,13 +58,17 @@ func newCache() *CacheClient {
 			panic(err)
 		}
 	}
-	opt.ClientName = "rss2masto"
 	opt.PoolSize = 20
-	opt.MinIdleConns = 5
 	opt.PoolTimeout = 4 * time.Second
-	opt.DialTimeout = 5 * time.Second
-	opt.ConnMaxIdleTime = 30 * time.Second
-	opt.ConnMaxLifetime = 5 * time.Minute
+	opt.ConnMaxIdleTime = 1 * time.Minute
+	opt.ConnMaxLifetime = 10 * time.Minute
+	opt.Dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := &net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
 
 	client := redis.NewClient(opt)
 
